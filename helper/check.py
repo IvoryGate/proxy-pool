@@ -9,6 +9,8 @@
 参考资料：learn/02_httpx_代理验证入门.py（httpx 用法与踩坑）
 """
 
+import re
+
 import httpx
 
 # 测试目标：我们判别"代理能否访问外网"的基准站点
@@ -17,6 +19,9 @@ HTTP_URL = "http://www.baidu.com"
 TIMEOUT = 5
 # 淘汰阈值：连续失败超过这个数，就认为代理死了
 MAX_FAIL_COUNT = 3
+# ip:port 合法格式正则（如 1.2.3.4:8080）
+PROXY_FORMAT = re.compile(
+    r'^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$')
 
 
 class Checker:
@@ -26,6 +31,12 @@ class Checker:
         注意：这里是纯验证，只返回 (成功与否, 失败次数)，不决定是否删除，
         删除与否由调用方（调度器）依据 MAX_FAIL_COUNT 决定。
         """
+        # 前置：格式不合法根本不用发网络请求，直接判失败
+        if not self._format_check(proxy):
+            proxy.fail_count += 1
+            proxy.check_count += 1
+            return False, proxy.fail_count
+
         ok = self._http_check(proxy)
         if ok:
             proxy.fail_count = 0
@@ -37,6 +48,10 @@ class Checker:
     def should_eliminate(self, fail_count):
         """判断该代理是否该被淘汰。"""
         return fail_count > MAX_FAIL_COUNT
+
+    def _format_check(self, proxy):
+        """格式校验：ip:port 是否合法。不合法根本没理由发网络请求。"""
+        return bool(PROXY_FORMAT.match(proxy.proxy))
 
     def _http_check(self, proxy):
         """通过代理访问 HTTP_URL，能拿到 200 就返回 True。"""

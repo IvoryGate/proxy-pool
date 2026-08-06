@@ -47,9 +47,24 @@ def test_success_resets_fail_count():
     assert fc == 0  # 成功一次就把之前的失败清零
 
 
+def test_format_check_rejects_bad_proxy():
+    # 格式不合法（缺端口），根本不该发网络请求就直接判失败
+    c = FakeFailChecker()
+    bad = Proxy(proxy="不是代理格式", fail_count=0)
+    ok, fc = c.check(bad)
+    assert ok is False
+    assert fc == 1
+
+    # 合法格式但连不通（假验证器判失败）→ fail_count 照常累计
+    valid = Proxy(proxy="1.2.3.4:8080", fail_count=0)
+    ok, fc = c.check(valid)
+    assert ok is False
+    assert fc == 1
+
+
 if __name__ == "__main__":
     for fn in [test_failure_count_grows, test_elimination_after_max_fail,
-               test_success_resets_fail_count]:
+               test_success_resets_fail_count, test_format_check_rejects_bad_proxy]:
         fn()
         print(f"{fn.__name__} OK")
     print("ALL PASSED")
