@@ -11,10 +11,29 @@ from model.proxy import Proxy
 class FakeAsyncChecker(Checker):
     """假异步验证器：不发网络请求，返回模拟结果。"""
 
-    async def _async_fetch_ok(self, client, url, proxy_addr):
-        if proxy_addr.endswith(":8080"):
-            return True
-        return False
+    def __init__(self):
+        super().__init__()
+        self.current = ""  # 记录当前正在验证的代理，供 _async_fetch_ok 判断
+
+    async def _check_one_async(self, proxy):
+        # 用假的单代理逻辑，覆盖真实联网的 _check_one_async
+        self.current = proxy.proxy
+        if not self._format_check(proxy):
+            proxy.fail_count += 1
+            proxy.check_count += 1
+            proxy.last_status = False
+            return False, proxy.fail_count
+        ok = proxy.proxy.endswith(":8080")
+        if ok:
+            proxy.https = True
+            proxy.fail_count = 0
+            proxy.last_status = True
+        else:
+            proxy.fail_count += 1
+            proxy.last_status = False
+            proxy.https = False
+        proxy.check_count += 1
+        return ok, proxy.fail_count
 
 
 class FakeFailChecker(Checker):

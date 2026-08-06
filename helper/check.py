@@ -88,14 +88,13 @@ class Checker:
         return asyncio.run(self._check_all_async(list(proxies)))
 
     async def _check_all_async(self, proxies):
-        async with httpx.AsyncClient(timeout=self.timeout,
-                                     verify=False) as client:
-            results = await asyncio.gather(
-                *(self._check_one_async(client, p) for p in proxies))
+        # 每个代理用它自己的代理地址建独立 AsyncClient（proxy 必须挂 client 而非请求）
+        results = await asyncio.gather(
+            *(self._check_one_async(p) for p in proxies))
         ok_count = sum(1 for ok, _ in results if ok)
         return ok_count, list(zip(proxies, results))
 
-    async def _check_one_async(self, client, proxy):
+    async def _check_one_async(self, proxy):
         """异步验证单个 proxy（格式 + http + https），更新其状态。"""
         if not self._format_check(proxy):
             proxy.fail_count += 1
@@ -103,24 +102,26 @@ class Checker:
             proxy.last_status = False
             return False, proxy.fail_count
 
-        targets = self._targets_for(proxy)
-        http_ok = await self._async_fetch_ok(client, targets["http"], proxy.proxy)
-        if http_ok:
-            proxy.https = await self._async_fetch_ok(
-                client, targets["https"], proxy.proxy)
-            proxy.fail_count = 0
-            proxy.last_status = True
-        else:
-            proxy.fail_count += 1
-            proxy.last_status = False
-            proxy.https = False
+        proxy_url = f"http://{proxy.proxy}"
+        # 走代理的请求：proxy 必须作为 AsyncClient 参数，请求级不能传
+        async with httpx.AsyncClient(proxy=proxy_url, timeout=self.timeout,
+                                     verify=False) as client:
+            targets = self._targets_for(proxy)
+            http_ok = await self._async_fetch_ok(client, targets["http"])
+            if http_ok:
+                proxy.https = await self._async_fetch_ok(client, targets["https"])
+                proxy.fail_count = 0
+                proxy.last_status = True
+            else:
+                proxy.fail_count += 1
+                proxy.last_status = False
+                proxy.https = False
         proxy.check_count += 1
         return http_ok, proxy.fail_count
 
-    async def _async_fetch_ok(self, client, url, proxy_addr):
-        proxy_url = f"http://{proxy_addr}"
+    async def _async_fetch_ok(self, client, url):
         try:
-            r = await client.get(url, proxy=proxy_url)
+            r = await client.get(url)
             return r.status_code == 200
         except Exception:
             return False
