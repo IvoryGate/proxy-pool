@@ -7,6 +7,7 @@
 import httpx
 
 from fetcher.base import BaseFetcher
+from fetcher.util import yield_unique_proxies
 
 
 class GeonodeFetcher(BaseFetcher):
@@ -30,7 +31,7 @@ class GeonodeFetcher(BaseFetcher):
             if ip and port:
                 proxies.append(f"{ip}:{port}")
 
-        for proxy in self.yield_unique_proxies(proxies):
+        for proxy in yield_unique_proxies(proxies):
             yield proxy
 
 
