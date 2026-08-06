@@ -8,6 +8,8 @@
   - check_pool()  定期复核池内代理，失效超过阈值则淘汰（use 复核）
 """
 
+import random
+
 from fetcher.manager import Fetcher
 from helper.check import Checker
 from db.redis_client import RedisPool
@@ -62,10 +64,48 @@ class ProxyService:
     def count(self):
         return self.pool.count()
 
-    def get(self, https=False):
-        """随机取一个代理（不删除）。https=True 只取 https 的。"""
-        return self.pool.get(https=https)
+    def get(self, need="any", https=False, security=None, quality=None,
+            fast=False):
+        """按业务语义取一个代理（不删除）。
 
-    def pop(self, https=False):
-        """随机取一个并删除（消费式）。https=True 只取 https 的。"""
-        return self.pool.pop(https=https)
+        need       : 'cn' | 'global' | 'any' —— 要能访问哪
+        https      : True 只要支持 https 的
+        security   : 'strict' 匿名+未篡改 | 'anon' 只要匿名 | None 不要求
+        quality    : 'stable' 只要信任分高的 | None 不要求
+        fast       : True 只选低延迟的
+        策略：先按条件粗筛一批候选，再按信任分加权挑一个（越稳越优先）。
+        """
+        region = None if need in ("any", None) else need
+        safe = (security == "strict")
+        candidates = self.pool.get_many(20, https=https, region=region,
+                                        safe=safe)
+        if not candidates:
+            return None
+
+        if security == "anon":
+            candidates = [p for p in candidates
+                          if p.anonymous in ("elite", "anonymous")]
+        if quality == "stable":
+            candidates = [p for p in candidates if p.score >= 2]
+        if fast:
+            candidates = [p for p in candidates
+                          if p.latency_ms is not None and p.latency_ms <= 3000]
+        if not candidates:
+            return None
+
+        # 信任分加权：score 越高的代理，被选中的概率越大
+        weights = [max(1, p.score + 1) for p in candidates]
+        total = sum(weights)
+        r = random.random() * total
+        acc = 0
+        for p, w in zip(candidates, weights):
+            acc += w
+            if r <= acc:
+                return p
+        return candidates[-1]
+
+    def pop(self, https=False, need="any", security=None):
+        """按需取一个并删除（消费式）。"""
+        region = None if need in ("any", None) else need
+        safe = (security == "strict")
+        return self.pool.pop(https=https, region=region, safe=safe)

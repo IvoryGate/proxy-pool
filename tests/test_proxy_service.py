@@ -42,6 +42,22 @@ class FakePool:
     def delete(self, proxy):
         self.store.pop(proxy.proxy, None)
 
+    def get_many(self, count=10, https=False, region=None, safe=False):
+        out = []
+        for p in self.store.values():
+            if https and not p.https:
+                continue
+            if region == "cn" and p.region != "CN":
+                continue
+            if region == "global" and p.region == "CN":
+                continue
+            if safe and not (p.anonymous == "elite" and not p.tampered):
+                continue
+            out.append(p)
+            if len(out) >= count:
+                break
+        return out
+
 
 def test_check_pool_eliminates_dead():
     from handler.proxy_service import ProxyService
@@ -68,7 +84,53 @@ def test_check_pool_eliminates_dead():
     assert "2.2.2.2:80" in pool.store          # retry 保留（给机会）
 
 
+def test_get_business_semantics():
+    from handler.proxy_service import ProxyService
+
+    pool = FakePool()
+    pool.put(Proxy(proxy="1.1.1.1:80", region="CN", https=True,
+                   anonymous="elite", tampered=False, score=5))
+    pool.put(Proxy(proxy="2.2.2.2:80", region="CN", anonymous="transparent",
+                   score=1))   # 透明，不安全
+    pool.put(Proxy(proxy="3.3.3.3:80", region="", https=True,
+                   anonymous="elite", tampered=True, score=3))  # 被篡改
+
+    svc = ProxyService(checker=FakeChecker(set()), pool=pool)
+
+    # 要国内安全的：只有 1.1.1.1 满足
+    p = svc.get(need="cn", security="strict")
+    assert p is not None and p.proxy == "1.1.1.1:80"
+
+    # 要国外：3.3.3.3 虽是 elite 但 tampered=True，strict 排除它
+    p = svc.get(need="global", security="strict")
+    assert p is None  # 唯一国外的是被篡改的
+
+    # 国外但不要求安全 → 能拿到 3.3.3.3
+    p = svc.get(need="global")
+    assert p is not None and p.proxy == "3.3.3.3:80"
+
+    # 要 https 的国内 → 1.1.1.1
+    p = svc.get(need="cn", https=True)
+    assert p is not None and p.https is True
+
+
+def test_get_stable_quality():
+    from handler.proxy_service import ProxyService
+
+    pool = FakePool()
+    pool.put(Proxy(proxy="1.1.1.1:80", score=0))   # 不够稳
+    pool.put(Proxy(proxy="2.2.2.2:80", score=5))   # 稳
+
+    svc = ProxyService(checker=FakeChecker(set()), pool=pool)
+    p = svc.get(quality="stable")
+    assert p is not None and p.proxy == "2.2.2.2:80"
+
+
 if __name__ == "__main__":
     test_check_pool_eliminates_dead()
+    test_get_business_semantics()
+    test_get_stable_quality()
     print("test_check_pool_eliminates_dead OK")
+    print("test_get_business_semantics OK")
+    print("test_get_stable_quality OK")
     print("ALL PASSED")

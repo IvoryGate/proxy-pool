@@ -10,12 +10,14 @@ class FakeService:
     def __init__(self):
         self.pop_https = None
         self.get_https = None
+        self.last_kwargs = None
 
-    def get(self, https=False):
+    def get(self, https=False, **kwargs):
         self.get_https = https
+        self.last_kwargs = kwargs
         return Proxy(proxy="1.2.3.4:8080")
 
-    def pop(self, https=False):
+    def pop(self, https=False, **kwargs):
         self.pop_https = https
         return Proxy(proxy="5.6.7.8:900")
 
@@ -24,10 +26,10 @@ class FakeService:
 
 
 class EmptyService(FakeService):
-    def get(self, https=False):
+    def get(self, https=False, **kwargs):
         return None
 
-    def pop(self, https=False):
+    def pop(self, https=False, **kwargs):
         return None
 
 
@@ -71,9 +73,34 @@ def test_empty_pool_404():
     assert r.status_code == 404
 
 
+def test_get_passes_business_params():
+    from api.proxy_api import create_app
+
+    svc = FakeService()
+    client = create_app(svc).test_client()
+
+    client.get("/get?need=cn&security=strict&fast=1")
+    k = svc.last_kwargs
+    assert k["need"] == "cn"
+    assert k["security"] == "strict"
+    assert k["fast"] is True
+
+
+def test_strategies_list():
+    from api.proxy_api import create_app
+
+    svc = FakeService()
+    client = create_app(svc).test_client()
+    r = client.get("/strategies")
+    assert r.status_code == 200
+    data = r.get_json()["data"]
+    assert "random" in data and "sticky" in data and "rotate" in data
+
+
 if __name__ == "__main__":
     tests = [test_get_returns_proxy, test_get_https_passes_flag,
-             test_pop_returns_and_pops, test_empty_pool_404]
+             test_pop_returns_and_pops, test_empty_pool_404,
+             test_get_passes_business_params, test_strategies_list]
     for t in tests:
         t()
         print(f"{t.__name__} OK")
