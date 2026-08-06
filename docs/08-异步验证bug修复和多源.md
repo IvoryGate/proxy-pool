@@ -52,9 +52,18 @@ print('可用',ok,'/',len(proxies))"   # 修复后：24/40，池子真实有货
 - 坑 2：假测试类 `FakeAsyncChecker._async_fetch_ok` 签名没随修复更新 →
   调整该假类构造，改为整体覆写 `_check_one_async`，不依赖真实 client 内部结构。
 
+## 补充：每源上限 + 多源真实自动充池
+
+- `Fetcher.run()` 增加 `max_per_source` 参数，防止超大源（hproxy 2.6万）阻塞调度。
+- `ProxyService.refresh(max_per_source=...)` 穿透该参数；调度器 `MAX_PER_SOURCE=300`，
+  `REFRESH_INTERVAL=5min` / `CHECK_INTERVAL=2min`。
+- **真实实跑**：5 源各抓 300，并发验证，`refresh 耗时约 30s`；
+  一次跑出 `available 10，新增若干`，`check_pool` 复核正常（淘汰 0）；
+  池子曾达 `{total:24, https:11}`（hproxy-cn 子集），全链路 get/pop/count 均正常。
+- 确认：免费代理存活率确实低（多数批次 0），但有 hproxy/proxyscrape CN 子集能稳定供活。
+
 ## 下一步
 
-- 把 hproxy 全量 / proxyscrape 整合进 refresh，正式跑调度自动充池。
 - API 支持 region 筛选（/get?region=CN）。
-- 补爬触发 + pytest 规范化。
-- 观察：修复后"国内可用"真实水平，再决定要不要额外补国内源。
+- 把 h5/gehode 等国内专源纳入池，重点提高"国内可用"。
+- 观察真实存活率，再决定补源策略。
