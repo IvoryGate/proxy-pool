@@ -36,6 +36,13 @@ def _discover_fetcher_classes():
 
 
 class Fetcher:
+    def __init__(self, pool=None):
+        """pool：可选，一个提供 get()/put() 的对象（如 RedisPool）。
+        若给了，抓源时会给每个源发一个池内代理（fetcher.proxy），
+        让源通过它抓取以绕反爬；抓完把代理还回池。不给则源直连抓取。
+        """
+        self.pool = pool
+
     def run(self, fetcher_classes=None, max_per_source=None):
         """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。
 
@@ -51,23 +58,32 @@ class Fetcher:
         for cls in fetcher_classes:
             fetcher = cls()
             name = fetcher.name
-            fetched = 0
-            for item in fetcher.fetch():
-                if max_per_source is not None and fetched >= max_per_source:
-                    break
-                # 源可以 yield 字符串 "ip:port"，也可以 yield Proxy（带 region 等信息）
-                item_proxy = item.proxy if isinstance(item, Proxy) else item
-                if item_proxy in proxy_dict:
-                    # 同一个代理被多个源抓到：标记来源，不重复存
-                    existing = proxy_dict[item_proxy]
-                    if not existing.source:
-                        existing.source = name
-                else:
-                    p = item if isinstance(item, Proxy) else Proxy(proxy=item)
-                    if not p.source:
-                        p.source = name
-                    proxy_dict[item_proxy] = p
-                fetched += 1
+            # 抓源前：从池子里借一个代理给源用（绕反爬），抓完还回
+            src_proxy = self.pool.get() if self.pool else None
+            if src_proxy:
+                fetcher.proxy = src_proxy.proxy
+            try:
+                fetched = 0
+                for item in fetcher.fetch():
+                    if max_per_source is not None and fetched >= max_per_source:
+                        break
+                    # 源可以 yield 字符串 "ip:port"，也可以 yield Proxy（带 region 等信息）
+                    item_proxy = item.proxy if isinstance(item, Proxy) else item
+                    if item_proxy in proxy_dict:
+                        # 同一个代理被多个源抓到：标记来源，不重复存
+                        existing = proxy_dict[item_proxy]
+                        if not existing.source:
+                            existing.source = name
+                    else:
+                        p = item if isinstance(item, Proxy) else Proxy(proxy=item)
+                        if not p.source:
+                            p.source = name
+                        proxy_dict[item_proxy] = p
+                    fetched += 1
+            finally:
+                # 抓完把借出去的代理还回池子
+                if src_proxy and self.pool:
+                    self.pool.put(src_proxy)
 
         for proxy in proxy_dict.values():
             yield proxy
