@@ -9,16 +9,17 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 from handler.proxy_service import ProxyService
 
-# 检查水位 / 复核间隔（分钟）
-WATERLINE_INTERVAL = 10
-CHECK_INTERVAL = 2
-# 每轮补源时每个源最多抓多少个
-MAX_PER_SOURCE = 100
+# 检查水位 / 复核间隔（分钟）。
+# 免费代理寿命分钟级：复核太快删不干净、太慢留死代理；补源太慢跟不上死亡速度。
+# 实测：复核 1 分钟、补源 3 分钟，能让池子"边漏边补"保持水位。
+WATERLINE_INTERVAL = 3
+CHECK_INTERVAL = 1
 
 
 def make_waterline_job(service):
     """返回水位检查任务闭包，注入 service 以便测试替换。"""
     def waterline_job():
+        from config.services import MAX_PER_SOURCE
         print(">> 水位检查触发")
         levels, rounds, ok = service.ensure_waterlines(
             max_per_source=MAX_PER_SOURCE)

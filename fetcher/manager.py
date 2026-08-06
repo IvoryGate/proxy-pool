@@ -9,9 +9,11 @@
 
 import importlib
 import os
+import random
 
 from model.proxy import Proxy
 from fetcher.base import BaseFetcher
+from fetcher.util import reservoir_sample
 
 
 def _discover_fetcher_classes():
@@ -52,6 +54,8 @@ class Fetcher:
         """
         if fetcher_classes is None:
             fetcher_classes = _discover_fetcher_classes()
+            # 打乱源顺序：避免每次固定从同一批源开始抓（均衡各源抓取频率）
+            random.shuffle(fetcher_classes)
 
         proxy_dict = {}   # {"1.2.3.4:8080": Proxy, ...}，key 保证去重
 
@@ -63,10 +67,12 @@ class Fetcher:
             if src_proxy:
                 fetcher.proxy = src_proxy.proxy
             try:
-                fetched = 0
-                for item in fetcher.fetch():
-                    if max_per_source is not None and fetched >= max_per_source:
-                        break
+                # max_per_source 有值时：对源的 fetch 流做水塘抽样（等概率随机取 N 个）
+                # 而不是取前 N 个 —— 大源（如 hproxy 2 万+）反复取前 N 会漏掉更新的代理
+                source_items = fetcher.fetch()
+                if max_per_source is not None:
+                    source_items = reservoir_sample(source_items, max_per_source)
+                for item in source_items:
                     # 源可以 yield 字符串 "ip:port"，也可以 yield Proxy（带 region 等信息）
                     item_proxy = item.proxy if isinstance(item, Proxy) else item
                     if item_proxy in proxy_dict:
@@ -79,7 +85,6 @@ class Fetcher:
                         if not p.source:
                             p.source = name
                         proxy_dict[item_proxy] = p
-                    fetched += 1
             finally:
                 # 抓完把借出去的代理还回池子
                 if src_proxy and self.pool:

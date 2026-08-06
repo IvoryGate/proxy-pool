@@ -47,3 +47,36 @@ def yield_unique_proxies(proxies):
         if proxy not in seen:
             seen.add(proxy)
             yield proxy
+
+
+def reservoir_sample(iterable, k, max_scan=5000):
+    """水塘抽样：从流式 iterable 中**等概率**随机抽 k 个。
+
+    为什么需要：
+      manager 抓大源（如 hproxy 2 万+）时限制 max_per_source=100，
+      如果"取前 100"，会反复取到同一批早期代理，漏掉后面更新的。
+      水塘抽样保证：每个代理被抽中的概率相同（= k / 总数），
+      每次跑的样本不同，覆盖更全面。
+
+    实现：
+      先填满 k 大小的"蓄水池"，之后第 i 个元素以 k/(i+1) 概率
+      随机替换池中一个元素。最终池中每个元素概率均等。
+    内存：只占 O(k)，不把整个流加载进来。
+
+    代价：需要遍历整个流（大源 2 万+ 全读完才能等概率抽）。
+    为限制耗时，max_scan 设定最多扫描多少个就停（默认 5000）：
+      在 max_scan 范围内等概率抽样，既保证样本多样（不是总取前 k），
+      又不至于为抽 k 个把整个大源拖完。
+    """
+    pool = []
+    for i, item in enumerate(iterable):
+        if i >= max_scan:
+            break
+        if i < k:
+            pool.append(item)
+        else:
+            # 第 i 个元素（i>=k）以 k/(i+1) 概率替换蓄水池中随机一个
+            j = random.randint(0, i)
+            if j < k:
+                pool[j] = item
+    yield from pool

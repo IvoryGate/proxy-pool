@@ -16,21 +16,33 @@
 # 各区域的服务下限
 SERVICE_MIN = {
     "cn": {
-        "all": 30,      # 国内普通（能访问国内即可）
-        "safe": 5,      # 国内且安全（匿名+未篡改）
-        "stable": 10,   # 国内且稳定（信任分高）
+        "all": 30,       # 国内普通（能访问国内即可）
+        "safe": 5,       # 国内且安全（匿名+未篡改）
+        # 稳定性分级：stable1=通过≥1次验证(基本可信)、stable2=≥3次、stable3=≥5次
+        "stable1": 10,   # 轻度任务（临时取用）
+        "stable2": 5,    # 常规任务（有一定验证记录）
+        "stable3": 3,    # 重要任务（长期稳定存活）
     },
     "global": {
         "all": 30,
         "safe": 5,
-        "stable": 10,
+        "stable1": 10,
+        "stable2": 5,
+        "stable3": 3,
     },
+}
+
+# 稳定性档位 → 最低信任分
+STABLE_LEVELS = {
+    "stable1": 1,
+    "stable2": 3,
+    "stable3": 5,
 }
 
 # 补源循环：连续多少轮无新增就停止（避免无限抓）
 MAX_STALL_ROUNDS = 3
-# 每轮补源时每个源最多抓多少
-MAX_PER_SOURCE = 100
+# 每轮补源时每个源最多抓多少（水塘抽样，每次取不同批，可放心取多些）
+MAX_PER_SOURCE = 300
 
 
 def service_candidates():

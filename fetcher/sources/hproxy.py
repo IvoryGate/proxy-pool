@@ -16,8 +16,10 @@ class HProxyFetcher(BaseFetcher):
     name = "hproxy"
     url = "https://cdn.jsdelivr.net/gh/hproxy-com/free-proxy-list@main/all.txt"
 
-    def __init__(self, country=""):
-        # country="" 全量；country="CN" 只取中国（by-country/CN.txt）
+    def __init__(self, country="CN"):
+        # country="CN" 只取中国（by-country/CN.txt）：这个源的全量列表 2 万+
+        # 但可用率极低（~10%），定向 CN 才能出高质量国内代理。
+        # country="" 全量（量大低质，慎用）。
         self.country = country
 
     def fetch(self):

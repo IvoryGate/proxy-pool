@@ -14,8 +14,14 @@ def make(pool):
     pool.put(Proxy(proxy="9.9.9.9:80", https=True))
 
 
+def _pool():
+    # 测试用独立 Redis db（db=15），避免污染生产池（db=0）
+    from db.redis_client import RedisPool
+    return RedisPool(db=15)
+
+
 def test_count():
-    pool = RedisPool()
+    pool = _pool()
     make(pool)
     c = pool.count()
     # region 空 → 全进 global；anonymous 空 → 都不 safe
@@ -28,7 +34,7 @@ def test_count():
 
 
 def test_get_https_only():
-    pool = RedisPool()
+    pool = _pool()
     make(pool)
     got = pool.get(https=True)
     assert got is not None
@@ -37,7 +43,7 @@ def test_get_https_only():
 
 
 def test_pop_deletes():
-    pool = RedisPool()
+    pool = _pool()
     make(pool)
     popped = pool.pop()
     assert popped is not None
@@ -46,7 +52,7 @@ def test_pop_deletes():
 
 
 def test_getAll_https_filter():
-    pool = RedisPool()
+    pool = _pool()
     make(pool)
     all_https = pool.getAll(https=True)
     assert all(x.https for x in all_https)
@@ -55,7 +61,7 @@ def test_getAll_https_filter():
 
 
 def test_bucket_filters():
-    pool = RedisPool()
+    pool = _pool()
     pool.clear()
     pool.put(Proxy(proxy="1.2.3.4:8080", region="CN", https=True,
                    anonymous="elite", tampered=False))   # 国内安全

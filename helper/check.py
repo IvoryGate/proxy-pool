@@ -20,26 +20,42 @@ import httpx
 from helper import probe
 
 # 默认验证目标（可被构造函数覆盖）
-HTTP_URL = "http://www.baidu.com"
-HTTPS_URL = "https://www.qq.com"
-# 请求超时：超过就不等了，算失败
-TIMEOUT = 5
-# 淘汰阈值：连续失败超过这个数，就认为代理死了
-MAX_FAIL_COUNT = 3
+# 存活验证用 ipify（纯 IP 回显）：内容校验有效（拦截劫持代理/Cloudflare假代理），
+# 且国内外网络都可达。再用 baidu 做"真实转发"第二道确认（见 REALITY_URL），
+# 防止"能回显 IP 但不转发流量"的伪代理。
+HTTP_URL = "http://api.ipify.org"
+HTTPS_URL = "https://api.ipify.org"
+# 真实转发确认目标：能访问真实网站才算可用（拦"能回显但不转发"的伪代理）
+REALITY_URL = "http://www.baidu.com"
+REALITY_HTML_MARK = b"baidu"
+# 请求超时：超过就不等了，算失败。
+# 5s→3s：池里近 99% 是死代理，降超时让它们快速失败，全量验证提速明显。
+# 免费代理延迟普遍 <1s，3s 足够覆盖活的；代价是极慢的活代理可能被误杀。
+TIMEOUT = 3
+# 淘汰阈值：连续失败超过这个数，就认为代理死了。
+# 3→5：免费代理波动大（网络抖动/目标站限流），连续 3 次失败很容易误删
+# 其实还活着的代理。5 次连续失败才淘汰，容错更稳。
+MAX_FAIL_COUNT = 5
 # ip:port 合法格式正则（如 1.2.3.4:8080）
 PROXY_FORMAT = re.compile(
     r'^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$')
+# 纯 IPv4 正则：验证 ipify 返回体必须是纯 IP，拦截劫持代理
+PROXY_IP_ONLY = re.compile(
+    r'^\d{1,3}(?:\.\d{1,3}){3}$')
 
-# 按区域分流验证目标：国内代理测国内站（baidu），
-# 其它（国外/未知）代理测国际站（youtube）。区域不对口才失败，
-# 而不是代理本身死了 —— 国外代理连不上 baidu 不代表它没用。
+# 按区域分流验证目标：**已弃用**。
+# 之前 CN→baidu、境外→youtube，但国内网络走境外代理访问 youtube 也会被墙，
+# 会把"代理活着但目标被墙"的境外代理全误杀。现在统一 ipify 存活验证，
+# 区域分桶交给源标签 + IP 归属地探测（helper/region_detect.py）。
 REGION_TARGETS = {
-    "CN":  {"http": "http://www.baidu.com",  "https": "https://www.qq.com"},
-    "GLOBAL": {"http": "http://www.youtube.com", "https": "https://www.youtube.com"},
+    "CN":  {"http": HTTP_URL, "https": HTTPS_URL},
+    "GLOBAL": {"http": HTTP_URL, "https": HTTPS_URL},
 }
 
 
-# 批量验证：一次并发多少个（过大几万个全并发会卡死，分批串行）
+# 批量验证：一批并发多少个。
+# 实测 500→1000 吞吐 +35%，但并发 1000 时部分代理被瞬时限流误杀（复核时
+# CN 代理被成片删掉）。取 500 平衡吞吐与误杀率。
 CHECK_BATCH_SIZE = 500
 
 
@@ -140,9 +156,20 @@ class Checker:
             targets = self._targets_for(proxy)
             http_ok = await self._async_fetch_ok(client, targets["http"])
             if http_ok:
-                proxy.https = await self._async_fetch_ok(client, targets["https"])
-                proxy.fail_count = 0
-                proxy.last_status = True
+                # 存活通过后：baidu(真实转发) 与 https 能力 **并行**检测。
+                # 之前串行 3 次请求，慢代理要 3×timeout 累积（10s+）；
+                # 并行后一个慢代理最快 ~timeout 就出结果，整批吞吐翻 3 倍。
+                reality_ok, https_ok = await asyncio.gather(
+                    self._reality_ok(client),
+                    self._async_fetch_ok(client, targets["https"]),
+                )
+                proxy.https = https_ok
+                if reality_ok:
+                    proxy.fail_count = 0
+                    proxy.last_status = True
+                else:
+                    proxy.fail_count += 1
+                    proxy.last_status = False
             else:
                 proxy.fail_count += 1
                 proxy.last_status = False
@@ -152,7 +179,7 @@ class Checker:
 
         # 存活通过后，做安全/质量探测（只打标签，不参与淘汰）
         if http_ok and self.probe_safety:
-            self._probe_safety(proxy)
+            await self._probe_safety_async(proxy, client)
             await self._measure_latency(proxy)
 
         return http_ok, proxy.fail_count
@@ -175,6 +202,18 @@ class Checker:
             # 能拿到"目标看到的IP"才下结论；拿不到就保留源标签不动
             proxy.anonymous = "elite" if anon_ok else "transparent"
         tamper_ok, _ = probe.check_tamper(proxy.proxy)
+        proxy.tampered = not tamper_ok
+
+    async def _probe_safety_async(self, proxy, client):
+        """异步安全探测：匿名性 + 篡改并行（生产用，比同步快一个量级）。
+
+        client 是验证阶段已建立的"走该代理"的 AsyncClient，探针复用它，
+        不重复建连接。
+        """
+        anon_ok, seen_ip = await probe.check_anonymity_async(proxy.proxy, client)
+        if seen_ip is not None:
+            proxy.anonymous = "elite" if anon_ok else "transparent"
+        tamper_ok, _ = await probe.check_tamper_async(proxy.proxy, client)
         proxy.tampered = not tamper_ok
 
     async def _measure_latency(self, proxy):
@@ -202,10 +241,37 @@ class Checker:
         except Exception:
             proxy.latency_ms = None
 
+    async def _reality_ok(self, client):
+        """第二道验证：走代理访问真实网站(baidu)，确认代理真转发流量。
+
+        ipify 只验证"能回显 IP"，有些伪代理/Cloudflare 边缘能回显但不转发
+        到任意目标。用 baidu 确认代理真能访问真实站点。
+        """
+        try:
+            r = await client.get(REALITY_URL)
+            if r.status_code != 200:
+                return False
+            return REALITY_HTML_MARK in r.content
+        except Exception:
+            return False
+
     async def _async_fetch_ok(self, client, url):
+        """GET 目标并判断"验证通过"。
+
+        不只查 status_code==200，还要校验返回体是合法 IP 地址
+        （ipify 返回纯 IP）。因为免费代理里有很多"劫持代理"：
+        它们收到请求后返回自己的网页（status 也是 200），
+        会把爬虫带沟里去。必须用内容兜底拦截它们。
+        """
         try:
             r = await client.get(url)
-            return r.status_code == 200
+            if r.status_code != 200:
+                return False
+            body = r.text.strip()
+            # 合法 IP 格式才通过（ipify 会返回一个 IPv4）
+            if not PROXY_IP_ONLY.match(body):
+                return False
+            return True
         except Exception:
             return False
 
@@ -230,6 +296,8 @@ class Checker:
         try:
             r = httpx.get(url, proxy=proxy_url, timeout=self.timeout,
                           verify=False)
-            return r.status_code == 200
+            if r.status_code != 200:
+                return False
+            return bool(PROXY_IP_ONLY.match(r.text.strip()))
         except Exception:
             return False

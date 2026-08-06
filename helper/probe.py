@@ -8,9 +8,13 @@
     比内容哈希。不同 → 代理注入/篡改了响应，安全上不能用。
   - 延迟(quality)：验证时记录 TTFB（首个字节耗时）。
 
-每个探针返回 (是否通过, 证据)。调用方据此给代理打标签。
+性能：同步接口（check_anonymity/check_tamper）用于测试/单代理；
+批量场景请用异步接口（check_anonymity_async/check_tamper_async），
+配合 asyncio.gather 并发，避免逐个串行拖慢整池复核。
+直连哈希有模块级缓存（_DIRECT_HASH），全池共用一次直连结果。
 """
 
+import asyncio
 import hashlib
 
 import httpx
@@ -22,6 +26,9 @@ STABLE_URL = "http://www.example.com"
 # 探针超时：探测代理本身，给短一点，别拖太久
 PROBE_TIMEOUT = 6
 
+# 直连 STABLE_URL 的哈希缓存：篡改检测的"基准"，全池共用，只取一次
+_DIRECT_HASH = None
+
 
 def _get(url, proxy_addr=None):
     """GET 请求。proxy_addr 给就走代理。失败返回 None。"""
@@ -32,6 +39,23 @@ def _get(url, proxy_addr=None):
         return httpx.get(url, **kwargs)
     except Exception:
         return None
+
+
+async def _get_async(client, url):
+    """异步 GET。失败返回 None。"""
+    try:
+        return await client.get(url)
+    except Exception:
+        return None
+
+
+def _direct_hash():
+    """直连 STABLE_URL 的内容哈希（带缓存，全池只取一次）。"""
+    global _DIRECT_HASH
+    if _DIRECT_HASH is None:
+        direct = _get(STABLE_URL)
+        _DIRECT_HASH = hashlib.md5(direct.content).hexdigest() if direct else None
+    return _DIRECT_HASH
 
 
 def check_anonymity(proxy_addr):
@@ -53,13 +77,49 @@ def check_tamper(proxy_addr):
 
     返回 (是否未篡改, 直连hash or None)。直连拿不到就不判（保守通过）。
     走代理拿到但内容 hash 与直连不同 → 篡改。
+    直连结果取缓存（全池一次），不再每次重复请求。
     """
-    direct = _get(STABLE_URL)
-    if direct is None:
+    direct_hash = _direct_hash()
+    if direct_hash is None:
         return True, None  # 直连失败，无法对照，不冤枉它
-    direct_hash = hashlib.md5(direct.content).hexdigest()
     via_proxy = _get(STABLE_URL, proxy_addr)
     if via_proxy is None:
         return True, direct_hash  # 代理访问失败交给存活检测判，这里不判篡改
     via_hash = hashlib.md5(via_proxy.content).hexdigest()
     return via_hash == direct_hash, direct_hash
+
+
+async def check_anonymity_async(proxy_addr, client=None):
+    """异步匿名性检测。client 可选（复用连接池），否则自建。"""
+    own = client is None
+    if own:
+        client = httpx.AsyncClient(timeout=PROBE_TIMEOUT, verify=False)
+    try:
+        r = await _get_async(client, IP_ECHO_URL)
+        if r is None:
+            return False, None
+        seen_ip = r.text.strip()
+        claimed_ip = proxy_addr.split(":")[0]
+        return seen_ip == claimed_ip, seen_ip
+    finally:
+        if own:
+            await client.aclose()
+
+
+async def check_tamper_async(proxy_addr, client=None):
+    """异步篡改检测。直连哈希取缓存。"""
+    direct_hash = _direct_hash()
+    if direct_hash is None:
+        return True, None
+    own = client is None
+    if own:
+        client = httpx.AsyncClient(timeout=PROBE_TIMEOUT, verify=False)
+    try:
+        via_proxy = await _get_async(client, STABLE_URL)
+        if via_proxy is None:
+            return True, direct_hash
+        via_hash = hashlib.md5(via_proxy.content).hexdigest()
+        return via_hash == direct_hash, direct_hash
+    finally:
+        if own:
+            await client.aclose()

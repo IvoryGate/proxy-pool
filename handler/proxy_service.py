@@ -27,10 +27,22 @@ class ProxyService:
 
         只放进"验证通过"且"池里还没有"的代理。
         max_per_source：每个源最多抓几个（None 不限），防止超大源阻塞。
+        验证通过但 region 为空的代理会做一次 IP 归属地探测补标签
+        （hproxy 等纯文本源的代理才有这情况），否则被错分到 global。
         返回 (新增数量, 本次可用数量)。
         """
         proxies = list(self.fetcher.run(max_per_source=max_per_source))
         ok_count, pairs = self.checker.check_all(proxies)
+
+        # 验证通过且 region 为空的 → 补打 region 标签
+        fresh = [p for p, _ in pairs if p.last_status and not p.region]
+        if fresh:
+            from helper.region_detect import detect_regions
+            detected = detect_regions(fresh)
+            for p in fresh:
+                cc = detected.get(p.proxy)
+                if cc:
+                    p.region = cc
 
         added = 0
         for proxy, _ in pairs:
@@ -62,7 +74,13 @@ class ProxyService:
         return len(proxies), eliminated
 
     def count(self):
-        return self.pool.count()
+        """池子统计：总数 + https/cn/global/safe + 各稳定档位。"""
+        c = self.pool.count()
+        from config.services import STABLE_LEVELS
+        for lvl, ms in STABLE_LEVELS.items():
+            c[lvl] = self.pool.count_by_region("global", min_score=ms) \
+                + self.pool.count_by_region("cn", min_score=ms)
+        return c
 
     # ---------- 水位控制（目标驱动补源） ----------
 
@@ -82,8 +100,11 @@ class ProxyService:
                 cur = self.pool.count_by_region(region)
             elif svc == "safe":
                 cur = self.pool.count_by_region(region, safe_only=True)
-            elif svc == "stable":
-                cur = self.pool.count_by_region(region, stable_only=True)
+            elif svc in ("stable1", "stable2", "stable3"):
+                # 稳定性分级：按档位对应的最低信任分统计
+                from config.services import STABLE_LEVELS
+                cur = self.pool.count_by_region(region,
+                                                min_score=STABLE_LEVELS[svc])
             else:
                 cur = 0
             levels[(region, svc)] = (cur, service_min[region][svc])
@@ -131,7 +152,8 @@ class ProxyService:
         need       : 'cn' | 'global' | 'any' —— 要能访问哪
         https      : True 只要支持 https 的
         security   : 'strict' 匿名+未篡改 | 'anon' 只要匿名 | None 不要求
-        quality    : 'stable' 只要信任分高的 | None 不要求
+        quality    : 'stable1'|'stable2'|'stable3' 按稳定性档位筛选
+                     （stable 视为 stable1，None 不要求）
         fast       : True 只选低延迟的
         策略：先按条件粗筛一批候选，再按信任分加权挑一个（越稳越优先）。
         """
@@ -145,8 +167,13 @@ class ProxyService:
         if security == "anon":
             candidates = [p for p in candidates
                           if p.anonymous in ("elite", "anonymous")]
-        if quality == "stable":
-            candidates = [p for p in candidates if p.score >= 2]
+        if quality:
+            # 稳定性档位：stable1/stable2/stable3 → 最低信任分
+            from config.services import STABLE_LEVELS
+            q = "stable1" if quality == "stable" else quality
+            min_score = STABLE_LEVELS.get(q)
+            if min_score:
+                candidates = [p for p in candidates if p.score >= min_score]
         if fast:
             candidates = [p for p in candidates
                           if p.latency_ms is not None and p.latency_ms <= 3000]

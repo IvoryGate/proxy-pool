@@ -2,9 +2,10 @@
 
 路由 / 参数：
   GET /get?mode=random|sticky|rotate&need=cn|global|any
-           &type=http|https &security=strict|anon &quality=stable
+           &type=http|https &security=strict|anon &quality=stable1|stable2|stable3
            &fast=1 &session=xxx &count=N
-      随机/粘性/轮换取代理（不删除）
+      随机/粘性/轮换取代理（不删除）；quality 是稳定性档位
+      （stable1=通过≥1次验证、stable2=≥3次、stable3=≥5次）
   GET /pop?type=https&need=cn     按条件取一个并删除（消费式）
   GET /count                       池子统计（含分桶）
   GET /strategies                  列出当前可用取用策略
