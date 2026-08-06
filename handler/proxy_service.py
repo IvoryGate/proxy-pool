@@ -20,13 +20,14 @@ class ProxyService:
         self.checker = checker or Checker()
         self.pool = pool or RedisPool()
 
-    def refresh(self):
+    def refresh(self, max_per_source=None):
         """抓取一批新代理 → 并发验证 → 首次入库（不重复放）。
 
         只放进"验证通过"且"池里还没有"的代理。
+        max_per_source：每个源最多抓几个（None 不限），防止超大源阻塞。
         返回 (新增数量, 本次可用数量)。
         """
-        proxies = list(self.fetcher.run())
+        proxies = list(self.fetcher.run(max_per_source=max_per_source))
         ok_count, pairs = self.checker.check_all(proxies)
 
         added = 0

@@ -9,7 +9,7 @@ class FakeService:
         self.calls = 0
         self.check_calls = 0
 
-    def refresh(self):
+    def refresh(self, max_per_source=None):
         self.calls += 1
         return (2, 5)  # (added, ok)
 

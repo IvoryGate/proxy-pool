@@ -12,13 +12,15 @@ from handler.proxy_service import ProxyService
 # 抓取 / 复核间隔（分钟）
 REFRESH_INTERVAL = 5
 CHECK_INTERVAL = 2
+# 每次抓取时每个源最多抓多少个（防止超大源阻塞调度）
+MAX_PER_SOURCE = 300
 
 
 def make_refresh_job(service):
     """返回抓取任务闭包，注入 service 以便测试替换。"""
     def refresh_job():
         print(">> 抓取任务触发")
-        added, ok = service.refresh()
+        added, ok = service.refresh(max_per_source=MAX_PER_SOURCE)
         print(f"   本次可用 {ok}，新增 {added}，池子 {service.count()}")
     return refresh_job
 

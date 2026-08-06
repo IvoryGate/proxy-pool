@@ -36,10 +36,12 @@ def _discover_fetcher_classes():
 
 
 class Fetcher:
-    def run(self, fetcher_classes=None):
+    def run(self, fetcher_classes=None, max_per_source=None):
         """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。
 
         fetcher_classes：要跑的源类列表，默认自动扫描 sources/ 目录。
+        max_per_source：每个源最多抓取多少个代理，None 表示不限量。
+            防止超大源（如 hproxy 2.6 万）阻塞整个调度。
         """
         if fetcher_classes is None:
             fetcher_classes = _discover_fetcher_classes()
@@ -49,7 +51,10 @@ class Fetcher:
         for cls in fetcher_classes:
             fetcher = cls()
             name = fetcher.name
+            fetched = 0
             for item in fetcher.fetch():
+                if max_per_source is not None and fetched >= max_per_source:
+                    break
                 # 源可以 yield 字符串 "ip:port"，也可以 yield Proxy（带 region 等信息）
                 item_proxy = item.proxy if isinstance(item, Proxy) else item
                 if item_proxy in proxy_dict:
@@ -62,6 +67,7 @@ class Fetcher:
                     if not p.source:
                         p.source = name
                     proxy_dict[item_proxy] = p
+                fetched += 1
 
         for proxy in proxy_dict.values():
             yield proxy
