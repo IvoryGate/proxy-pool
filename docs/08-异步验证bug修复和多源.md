@@ -62,8 +62,25 @@ print('可用',ok,'/',len(proxies))"   # 修复后：24/40，池子真实有货
   池子曾达 `{total:24, https:11}`（hproxy-cn 子集），全链路 get/pop/count 均正常。
 - 确认：免费代理存活率确实低（多数批次 0），但有 hproxy/proxyscrape CN 子集能稳定供活。
 
+## 补充：网页表格源接入（回应"用代理去爬参考项目那些源"）
+
+用户提出：参考项目的网页源（ip3366/ip89/kuaidaili 等）人家能爬，我们
+不该被"反爬"吓退——有代理就开着代理去爬。
+
+实测结论（重要）：
+- **ip3366 / ip89 / kuaidaili 直连就能爬**（正则/xpath 抠表格）。之前
+  "正则 0 命中"是当时测的时机/站态问题，不是真要代理。
+- 新增 `BaseFetcher.proxy` 字段 + `_http_get()`：抓源时可走代理绕反爬；
+  `Fetcher.run()` 可选注入 pool，抓源前从池子借一个代理赋给 fetcher，
+  抓完还回。这一能力当前尚未被任何源强制依赖，但已就位（如遇 405 反爬
+  的 zdaye 可启用）。
+- **zdaye**：实测 405（需登录/验证码级反爬），`enabled=False` 暂禁用。
+- 新增源：ip3366（约40）、ip89（约40）、kuaidaili（约23），自动扫描后
+  共 **8 个启用源**。
+- 新增 `tests/test_fetcher_sources.py`：假 HTML 测解析（不联网）。
+- 补 `requirements.txt`（此前缺失），含 lxml。
+
 ## 下一步
 
 - API 支持 region 筛选（/get?region=CN）。
-- 把 h5/gehode 等国内专源纳入池，重点提高"国内可用"。
 - 观察真实存活率，再决定补源策略。
