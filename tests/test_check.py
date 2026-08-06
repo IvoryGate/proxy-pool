@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import os
 
@@ -5,6 +6,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from helper.check import Checker, MAX_FAIL_COUNT
 from model.proxy import Proxy
+
+
+class FakeAsyncChecker(Checker):
+    """假异步验证器：不发网络请求，返回模拟结果。"""
+
+    async def _async_fetch_ok(self, client, url, proxy_addr):
+        if proxy_addr.endswith(":8080"):
+            return True
+        return False
 
 
 class FakeFailChecker(Checker):
@@ -74,6 +84,19 @@ def test_https_flag_follows_https_check():
     assert p.https is False
 
 
+def test_check_all_batch():
+    c = FakeAsyncChecker()
+    good = Proxy(proxy="1.2.3.4:8080", fail_count=0)
+    bad = Proxy(proxy="5.6.7.8:900", fail_count=0)
+    bad2 = Proxy(proxy="9.9.9.9:80", fail_count=0)
+
+    ok_count, pairs = c.check_all([good, bad, bad2])
+    assert ok_count == 1  # 只有 :8080 的通过
+    assert good.fail_count == 0  # 成功 → 清零
+    assert bad.fail_count == 1   # 失败 → 加一
+    assert len(pairs) == 3
+
+
 def test_format_check_rejects_bad_proxy():
     # 格式不合法（缺端口），根本不该发网络请求就直接判失败
     c = FakeFailChecker()
@@ -92,7 +115,7 @@ def test_format_check_rejects_bad_proxy():
 if __name__ == "__main__":
     for fn in [test_failure_count_grows, test_elimination_after_max_fail,
                test_success_resets_fail_count, test_format_check_rejects_bad_proxy,
-               test_https_flag_follows_https_check]:
+               test_https_flag_follows_https_check, test_check_all_batch]:
         fn()
         print(f"{fn.__name__} OK")
     print("ALL PASSED")

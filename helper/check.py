@@ -12,6 +12,7 @@ qq 测 https。以后想换目标（如国外站），改这里或传入即可�
 参考资料：learn/02_httpx_代理验证入门.py（httpx 用法与踩坑）
 """
 
+import asyncio
 import re
 
 import httpx
@@ -34,6 +35,8 @@ class Checker:
         self.http_url = http_url
         self.https_url = https_url
         self.timeout = timeout
+
+    # ---------- 同步单个验证（测试/单代理场景友好） ----------
 
     def check(self, proxy):
         """验证一个 proxy，更新其状态（fail_count / https / check_count）。
@@ -60,6 +63,55 @@ class Checker:
             proxy.https = False
         proxy.check_count += 1
         return http_ok, proxy.fail_count
+
+    # ---------- 异步批量验证（生产用：整批并发，快一个量级） ----------
+
+    def check_all(self, proxies):
+        """并发验证一批 proxy，逐个更新各自状态。
+
+        返回 (可用数量, 总列表)。内部用 asyncio 把所有验证同时发出去，
+        总耗时 ≈ 最慢那一个，而不是"数量 × 单个耗时"。
+
+        参考：learn/03_并发验证.py
+        """
+        return asyncio.run(self._check_all_async(list(proxies)))
+
+    async def _check_all_async(self, proxies):
+        async with httpx.AsyncClient(timeout=self.timeout,
+                                     verify=False) as client:
+            results = await asyncio.gather(
+                *(self._check_one_async(client, p) for p in proxies))
+        ok_count = sum(1 for ok, _ in results if ok)
+        return ok_count, list(zip(proxies, results))
+
+    async def _check_one_async(self, client, proxy):
+        """异步验证单个 proxy（格式 + http + https），更新其状态。"""
+        if not self._format_check(proxy):
+            proxy.fail_count += 1
+            proxy.check_count += 1
+            proxy.last_status = False
+            return False, proxy.fail_count
+
+        http_ok = await self._async_fetch_ok(client, self.http_url, proxy.proxy)
+        if http_ok:
+            proxy.https = await self._async_fetch_ok(
+                client, self.https_url, proxy.proxy)
+            proxy.fail_count = 0
+            proxy.last_status = True
+        else:
+            proxy.fail_count += 1
+            proxy.last_status = False
+            proxy.https = False
+        proxy.check_count += 1
+        return http_ok, proxy.fail_count
+
+    async def _async_fetch_ok(self, client, url, proxy_addr):
+        proxy_url = f"http://{proxy_addr}"
+        try:
+            r = await client.get(url, proxy=proxy_url)
+            return r.status_code == 200
+        except Exception:
+            return False
 
     def should_eliminate(self, fail_count):
         """判断该代理是否该被淘汰。"""
