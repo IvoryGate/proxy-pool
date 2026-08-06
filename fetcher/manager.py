@@ -10,13 +10,14 @@
 from model.proxy import Proxy
 from fetcher.base import BaseFetcher
 from fetcher.sources.geonode import GeonodeFetcher
+from fetcher.sources.scdn import ScdnFetcher
 
 
 class Fetcher:
     def run(self):
         """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。"""
-        # 目前只有一个源。以后源变多，这里就从"手动列表"改成"自动扫描目录"。
-        fetcher_classes = [GeonodeFetcher]
+        # 目前只有两个源。以后源变多，这里就从"手动列表"改成"自动扫描目录"。
+        fetcher_classes = [GeonodeFetcher, ScdnFetcher]
 
         proxy_dict = {}   # {"1.2.3.4:8080": Proxy, ...}，key 保证去重
 
