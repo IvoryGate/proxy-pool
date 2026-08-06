@@ -14,10 +14,14 @@ from fetcher.sources.scdn import ScdnFetcher
 
 
 class Fetcher:
-    def run(self):
-        """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。"""
-        # 目前只有两个源。以后源变多，这里就从"手动列表"改成"自动扫描目录"。
-        fetcher_classes = [GeonodeFetcher, ScdnFetcher]
+    def run(self, fetcher_classes=None):
+        """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。
+
+        fetcher_classes：要跑的源类列表，默认全部（目前手动列，后续可改自动扫描）。
+        """
+        if fetcher_classes is None:
+            # 后续用"自动扫描 sources/ 目录"取代这个手动列表。
+            fetcher_classes = [GeonodeFetcher, ScdnFetcher]
 
         proxy_dict = {}   # {"1.2.3.4:8080": Proxy, ...}，key 保证去重
 
@@ -26,7 +30,7 @@ class Fetcher:
             name = fetcher.name
             for proxy_str in fetcher.fetch():
                 if proxy_str in proxy_dict:
-                    # 同一个代理被多个源抓到：只标记加了来源，不重复存
+                    # 同一个代理被多个源抓到：标记来源，不重复存
                     proxy_dict[proxy_str].source = name
                 else:
                     proxy_dict[proxy_str] = Proxy(proxy=proxy_str, source=name)
