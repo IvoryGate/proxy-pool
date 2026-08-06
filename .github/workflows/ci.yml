@@ -1,0 +1,58 @@
+# CI：lint + test（按项目实际裁剪，Python 后端）
+# 安全底线（改本文件后必须审计）：
+#   - 最小权限 permissions: contents: read
+#   - action 钉到版本/SHA
+#   - 不要 echo 未验证的 github 上下文字符串，一律用 env: 传
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CI: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install ruff pytest
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest
+
+  commit-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate commit messages
+        run: |
+          base=${{ github.event.pull_request.base.sha }}
+          for msg in $(git log "$base"..HEAD --format=%s); do
+            echo "$msg" | grep -E '^(feat|fix|refactor|docs|chore|perf|revert)(\([^)]*\))?!?: .+' \
+              || { echo "非法提交头: $msg"; exit 1; }
+          done
+
+# 审计说明（安全优先时执行）：
+#   1. pinact run .github/workflows/   # 把 @v4 之类钉到不变 SHA
+#   2. zizmor .github/workflows/       # 静态安全审计（注入/权限/未钉 action）
+#   3. actionlint                      # 语法校验
+# 本地调试: gh run watch --exit-status  /  act（本地跑工作流）
