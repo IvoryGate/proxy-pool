@@ -28,13 +28,24 @@ MAX_FAIL_COUNT = 3
 PROXY_FORMAT = re.compile(
     r'^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$')
 
+# 按区域分流验证目标：国内代理测国内站（baidu），
+# 其它（国外/未知）代理测国际站（youtube）。区域不对口才失败，
+# 而不是代理本身死了 —— 国外代理连不上 baidu 不代表它没用。
+REGION_TARGETS = {
+    "CN":  {"http": "http://www.baidu.com",  "https": "https://www.qq.com"},
+    "GLOBAL": {"http": "http://www.youtube.com", "https": "https://www.youtube.com"},
+}
+
 
 class Checker:
-    def __init__(self, http_url=HTTP_URL, https_url=HTTPS_URL,
-                 timeout=TIMEOUT):
-        self.http_url = http_url
-        self.https_url = https_url
+    def __init__(self, region_targets=None, timeout=TIMEOUT):
+        self.region_targets = region_targets or REGION_TARGETS
         self.timeout = timeout
+
+    def _targets_for(self, proxy):
+        """按代理区域选择验证目标。区域为 CN → 国内，否则 → 国际。"""
+        key = "CN" if proxy.region == "CN" else "GLOBAL"
+        return self.region_targets[key]
 
     # ---------- 同步单个验证（测试/单代理场景友好） ----------
 
@@ -92,10 +103,11 @@ class Checker:
             proxy.last_status = False
             return False, proxy.fail_count
 
-        http_ok = await self._async_fetch_ok(client, self.http_url, proxy.proxy)
+        targets = self._targets_for(proxy)
+        http_ok = await self._async_fetch_ok(client, targets["http"], proxy.proxy)
         if http_ok:
             proxy.https = await self._async_fetch_ok(
-                client, self.https_url, proxy.proxy)
+                client, targets["https"], proxy.proxy)
             proxy.fail_count = 0
             proxy.last_status = True
         else:
@@ -123,11 +135,11 @@ class Checker:
 
     def _http_check(self, proxy):
         """通过代理访问 http 目标，能拿到 200 就返回 True。"""
-        return self._fetch_ok(self.http_url, proxy.proxy)
+        return self._fetch_ok(self._targets_for(proxy)["http"], proxy.proxy)
 
     def _https_check(self, proxy):
         """通过代理访问 https 目标，能拿到 200 就返回 True（支持 https）。"""
-        return self._fetch_ok(self.https_url, proxy.proxy)
+        return self._fetch_ok(self._targets_for(proxy)["https"], proxy.proxy)
 
     def _fetch_ok(self, url, proxy_addr):
         proxy_url = f"http://{proxy_addr}"
