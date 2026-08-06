@@ -60,3 +60,11 @@ class ProxyService:
 
     def count(self):
         return self.pool.count()
+
+    def get(self, https=False):
+        """随机取一个代理（不删除）。https=True 只取 https 的。"""
+        return self.pool.get(https=https)
+
+    def pop(self, https=False):
+        """随机取一个并删除（消费式）。https=True 只取 https 的。"""
+        return self.pool.pop(https=https)
