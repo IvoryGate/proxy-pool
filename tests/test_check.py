@@ -66,6 +66,9 @@ def test_elimination_after_max_fail():
 
 def test_success_resets_fail_count():
     class FakeOkChecker(Checker):
+        def __init__(self):
+            super().__init__(probe_safety=False)
+
         def _http_check(self, proxy):
             return True
 
@@ -83,6 +86,9 @@ def test_success_resets_fail_count():
 def test_https_flag_follows_https_check():
     # http 通、https 不通 → 代理可用但 https 标记为 False
     class NoHttpsChecker(Checker):
+        def __init__(self):
+            super().__init__(probe_safety=False)
+
         def _http_check(self, proxy):
             return True
 

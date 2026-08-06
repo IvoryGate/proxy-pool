@@ -8,7 +8,7 @@
 class Proxy:
     def __init__(self, proxy, https=False, fail_count=0, check_count=0,
                  last_status=False, last_time=None, source="", region="",
-                 anonymous=""):
+                 anonymous="", latency_ms=None, score=0, tampered=False):
         self.proxy = proxy            # ip:port，唯一标识
         self.https = https            # 是否支持 https
         self.fail_count = fail_count  # 连续失败次数（淘汰依据）
@@ -16,8 +16,11 @@ class Proxy:
         self.last_status = last_status  # 上次校验是否成功
         self.last_time = last_time    # 上次校验时间
         self.source = source          # 从哪个源抓来的
-        self.region = region          # 地域
-        self.anonymous = anonymous    # 匿名级别
+        self.region = region          # 地域（源标签打底）
+        self.anonymous = anonymous    # 匿名级别（源标签打底）
+        self.latency_ms = latency_ms  # 延迟（毫秒），质量标签
+        self.score = score            # 信任分（稳定性），越高越可信
+        self.tampered = tampered      # 是否被篡改（注入广告/改响应）——安全标签
 
     def to_dict(self):
         """转成字典，供 to_json 用。"""
@@ -31,6 +34,9 @@ class Proxy:
             "source": self.source,
             "region": self.region,
             "anonymous": self.anonymous,
+            "latency_ms": self.latency_ms,
+            "score": self.score,
+            "tampered": self.tampered,
         }
 
     def to_json(self):
@@ -40,7 +46,26 @@ class Proxy:
 
     @classmethod
     def create_from_json(cls, json_str):
-        """从 Redis 里取出的 JSON 字符串还原成 Proxy 对象。"""
+        """从 Redis 里取出的 JSON 字符串还原成 Proxy 对象。
+
+        老版本 JSON 可能缺少新字段（latency_ms/score/tampered），
+        用缺省值兜底，保证向后兼容。
+        """
         import json
         data = json.loads(json_str)
-        return cls(**data)
+        defaults = {
+            "proxy": "",
+            "https": False,
+            "fail_count": 0,
+            "check_count": 0,
+            "last_status": False,
+            "last_time": None,
+            "source": "",
+            "region": "",
+            "anonymous": "",
+            "latency_ms": None,
+            "score": 0,
+            "tampered": False,
+        }
+        defaults.update(data)
+        return cls(**defaults)
