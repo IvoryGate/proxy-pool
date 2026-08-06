@@ -9,9 +9,12 @@ class FakeService:
         self.calls = 0
         self.check_calls = 0
 
-    def refresh(self, max_per_source=None):
+    def ensure_waterlines(self, max_per_source=None):
         self.calls += 1
-        return (2, 5)  # (added, ok)
+        return ({"('cn','all')": (30, 30)}, 1, True)  # (levels, rounds, ok)
+
+    def below_waterline(self, levels):
+        return []
 
     def check_pool(self):
         self.check_calls += 1
@@ -21,11 +24,11 @@ class FakeService:
         return {"total": 2, "https": 1}
 
 
-def test_refresh_job_calls_service():
-    from helper.scheduler import make_refresh_job
+def test_waterline_job_calls_service():
+    from helper.scheduler import make_waterline_job
 
     svc = FakeService()
-    job = make_refresh_job(svc)
+    job = make_waterline_job(svc)
     job()
     assert svc.calls == 1
 
@@ -40,6 +43,6 @@ def test_check_job_calls_service():
 
 
 if __name__ == "__main__":
-    test_refresh_job_calls_service()
+    test_waterline_job_calls_service()
     test_check_job_calls_service()
     print("ALL PASSED")

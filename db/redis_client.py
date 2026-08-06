@@ -147,6 +147,32 @@ class RedisPool:
             "safe": self._redis.scard(self._table_safe),
         }
 
+    def count_by_region(self, region, safe_only=False, stable_only=False):
+        """统计某区域下符合条件的代理数。
+
+        region      : 'cn' / 'global'
+        safe_only   : True 只要匿名且未篡改的
+        stable_only : True 只要信任分高的（score>=2）
+        返回数量。基于主数据实时统计（不依赖索引），准确但略慢。
+        """
+        if region == "cn":
+            keys = self._redis.smembers(self._table_cn)
+        else:
+            keys = self._redis.smembers(self._table_global)
+        n = 0
+        for key in keys:
+            raw = self._redis.hget(self._table, key)
+            if not raw:
+                continue
+            proxy = Proxy.create_from_json(raw)
+            if safe_only and not (proxy.anonymous == "elite"
+                                  and not proxy.tampered):
+                continue
+            if stable_only and (proxy.score < 2):
+                continue
+            n += 1
+        return n
+
     def clear(self):
         """清空整个池子（删除主结构和所有索引）。"""
         self._redis.delete(self._table)

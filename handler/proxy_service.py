@@ -64,6 +64,66 @@ class ProxyService:
     def count(self):
         return self.pool.count()
 
+    # ---------- 水位控制（目标驱动补源） ----------
+
+    def service_levels(self, service_min=None):
+        """读各服务当前水位，返回 {("cn","all"): (current, min), ...}。"""
+        if service_min is None:
+            from config.services import SERVICE_MIN, service_candidates
+            service_min = SERVICE_MIN
+            candidates = service_candidates()
+        else:
+            candidates = [(r, s) for r, specs in service_min.items()
+                          for s in specs]
+
+        levels = {}
+        for region, svc in candidates:
+            if svc == "all":
+                cur = self.pool.count_by_region(region)
+            elif svc == "safe":
+                cur = self.pool.count_by_region(region, safe_only=True)
+            elif svc == "stable":
+                cur = self.pool.count_by_region(region, stable_only=True)
+            else:
+                cur = 0
+            levels[(region, svc)] = (cur, service_min[region][svc])
+        return levels
+
+    def below_waterline(self, levels):
+        """返回所有未达标服务的 (region, svc, current, min) 列表。"""
+        return [(r, s, cur, mn) for (r, s), (cur, mn) in levels.items()
+                if cur < mn]
+
+    def ensure_waterlines(self, service_min=None, max_per_source=None,
+                          max_stall_rounds=None):
+        """目标驱动补源：把低于下限的服务补齐。
+
+        循环：
+          1. 读水位 → 找出未达标服务
+          2. 全达标 → 停
+          3. 有缺口 → 跑一轮 refresh（重跑所有源），统计新增
+          4. 连续 max_stall_rounds 轮无新增 → 视为源耗尽，停
+        返回 (各服务水位, 补源轮数, 是否达标)。
+        """
+        from config.services import MAX_STALL_ROUNDS as _DEFAULT_STALL
+        stall_rounds = max_stall_rounds or _DEFAULT_STALL
+
+        levels = self.service_levels(service_min)
+        rounds = 0
+        stalls = 0
+        while self.below_waterline(levels):
+            added, _ = self.refresh(max_per_source=max_per_source)
+            rounds += 1
+            if added == 0:
+                stalls += 1
+                if stalls >= stall_rounds:
+                    break
+            else:
+                stalls = 0
+            levels = self.service_levels(service_min)
+        ok = not self.below_waterline(levels)
+        return levels, rounds, ok
+
     def get(self, need="any", https=False, security=None, quality=None,
             fast=False):
         """按业务语义取一个代理（不删除）。

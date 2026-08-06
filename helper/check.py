@@ -39,6 +39,10 @@ REGION_TARGETS = {
 }
 
 
+# 批量验证：一次并发多少个（过大几万个全并发会卡死，分批串行）
+CHECK_BATCH_SIZE = 500
+
+
 class Checker:
     def __init__(self, region_targets=None, timeout=TIMEOUT,
                  probe_safety=True):
@@ -88,15 +92,31 @@ class Checker:
 
     # ---------- 异步批量验证（生产用：整批并发，快一个量级） ----------
 
-    def check_all(self, proxies):
-        """并发验证一批 proxy，逐个更新各自状态。
+    def check_all(self, proxies, batch_size=CHECK_BATCH_SIZE,
+                  on_batch=None):
+        """分批并发验证一批 proxy，逐个更新各自状态。
 
-        返回 (可用数量, 总列表)。内部用 asyncio 把所有验证同时发出去，
-        总耗时 ≈ 最慢那一个，而不是"数量 × 单个耗时"。
+        返回 (可用数量, 总列表)。每批内并发（同时发出），批间串行，
+        防止几万个代理一次全并发把连接/内存打爆。
+
+        on_batch: 可选回调 fn(batch_no, batch_ok)，每批完成后调用，
+            用于打进度日志（大批量验证时避免看起来像卡住）。
 
         参考：learn/03_并发验证.py
         """
-        return asyncio.run(self._check_all_async(list(proxies)))
+        proxies = list(proxies)
+        results = []
+        ok_count = 0
+        # 分批跑：每批 batch_size 个并发，跑完再下一批
+        total = len(proxies)
+        for i in range(0, total, batch_size):
+            batch = proxies[i:i + batch_size]
+            ok, pairs = asyncio.run(self._check_all_async(batch))
+            ok_count += ok
+            results.extend(pairs)
+            if on_batch:
+                on_batch(i // batch_size + 1, ok, min(i + batch_size, total))
+        return ok_count, results
 
     async def _check_all_async(self, proxies):
         # 每个代理用它自己的代理地址建独立 AsyncClient（proxy 必须挂 client 而非请求）

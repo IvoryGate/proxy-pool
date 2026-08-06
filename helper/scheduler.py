@@ -1,28 +1,36 @@
 """调度器：让池子定时自动运转，不需要人守着。
 
-用 APScheduler 的 BlockingScheduler 安排两个定时任务：
-  - refresh_job：抓一批新代理入库（每 REFRESH_INTERVAL 分钟）
-  - check_job  ：复核池内老代理，淘汰失效（每 CHECK_INTERVAL 分钟）
+用 APScheduler 的 BlockingScheduler 安排任务：
+  - waterline_job：检查各服务水位，低于下限就持续补源（目标驱动）
+  - check_job    ：复核池内老代理，淘汰失效
 """
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from handler.proxy_service import ProxyService
 
-# 抓取 / 复核间隔（分钟）
-REFRESH_INTERVAL = 5
+# 检查水位 / 复核间隔（分钟）
+WATERLINE_INTERVAL = 10
 CHECK_INTERVAL = 2
-# 每次抓取时每个源最多抓多少个（防止超大源阻塞调度）
-MAX_PER_SOURCE = 300
+# 每轮补源时每个源最多抓多少个
+MAX_PER_SOURCE = 100
 
 
-def make_refresh_job(service):
-    """返回抓取任务闭包，注入 service 以便测试替换。"""
-    def refresh_job():
-        print(">> 抓取任务触发")
-        added, ok = service.refresh(max_per_source=MAX_PER_SOURCE)
-        print(f"   本次可用 {ok}，新增 {added}，池子 {service.count()}")
-    return refresh_job
+def make_waterline_job(service):
+    """返回水位检查任务闭包，注入 service 以便测试替换。"""
+    def waterline_job():
+        print(">> 水位检查触发")
+        levels, rounds, ok = service.ensure_waterlines(
+            max_per_source=MAX_PER_SOURCE)
+        below = service.below_waterline(levels)
+        if below:
+            print(f"   补源 {rounds} 轮后仍未达标：")
+            for r, s, cur, mn in below:
+                print(f"     {r}/{s}: {cur}/{mn}")
+        else:
+            print(f"   所有服务达标（补源 {rounds} 轮）")
+        print(f"   池子 {service.count()}")
+    return waterline_job
 
 
 def make_check_job(service):
@@ -38,11 +46,11 @@ def run_scheduler():
     service = ProxyService()
     scheduler = BlockingScheduler()
 
-    scheduler.add_job(make_refresh_job(service), "interval",
-                      minutes=REFRESH_INTERVAL)
+    scheduler.add_job(make_waterline_job(service), "interval",
+                      minutes=WATERLINE_INTERVAL)
     scheduler.add_job(make_check_job(service), "interval",
                       minutes=CHECK_INTERVAL)
-    print(f"调度器启动：每 {REFRESH_INTERVAL} 分钟抓取，"
+    print(f"调度器启动：每 {WATERLINE_INTERVAL} 分钟检查水位并补源，"
           f"每 {CHECK_INTERVAL} 分钟复核。Ctrl+C 停止。")
     try:
         scheduler.start()

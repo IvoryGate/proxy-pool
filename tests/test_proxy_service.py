@@ -42,6 +42,9 @@ class FakePool:
     def delete(self, proxy):
         self.store.pop(proxy.proxy, None)
 
+    def exists(self, proxy):
+        return proxy.proxy in self.store
+
     def get_many(self, count=10, https=False, region=None, safe=False):
         out = []
         for p in self.store.values():
@@ -57,6 +60,20 @@ class FakePool:
             if len(out) >= count:
                 break
         return out
+
+    def count_by_region(self, region, safe_only=False, stable_only=False):
+        n = 0
+        for p in self.store.values():
+            if region == "cn" and p.region != "CN":
+                continue
+            if region == "global" and p.region == "CN":
+                continue
+            if safe_only and not (p.anonymous == "elite" and not p.tampered):
+                continue
+            if stable_only and p.score < 2:
+                continue
+            n += 1
+        return n
 
 
 def test_check_pool_eliminates_dead():
@@ -126,11 +143,87 @@ def test_get_stable_quality():
     assert p is not None and p.proxy == "2.2.2.2:80"
 
 
+def test_waterline_service_levels():
+    from handler.proxy_service import ProxyService
+
+    pool = FakePool()
+    pool.put(Proxy(proxy="1.1.1.1:80", region="CN", anonymous="elite",
+                   tampered=False, score=5))
+    svc = ProxyService(checker=FakeChecker(set()), pool=pool)
+
+    levels = svc.service_levels({"cn": {"all": 10, "safe": 1}})
+    assert levels[("cn", "all")] == (1, 10)    # 有1个，要10个
+    assert levels[("cn", "safe")] == (1, 1)    # 已达标
+    below = svc.below_waterline(levels)
+    assert below == [("cn", "all", 1, 10)]
+
+
+class FakeFetcher:
+    """假采集器：每次产出 N 个国内代理（模拟源持续供货）。"""
+
+    def __init__(self, per_round=5):
+        self.per_round = per_round
+        self.round = 0
+
+    def run(self, max_per_source=None):
+        self.round += 1
+        for i in range(self.per_round):
+            yield Proxy(proxy=f"10.0.{self.round}.{i}:80", region="CN",
+                        score=3, anonymous="elite", tampered=False)
+
+
+class FakeGoodChecker:
+    """假验证器：产出的新代理全部验证通过。"""
+
+    def check_all(self, proxies):
+        for p in proxies:
+            p.last_status = True
+            p.fail_count = 0
+            p.check_count += 1
+        return len(proxies), [(p, 0) for p in proxies]
+
+    def should_eliminate(self, fail_count):
+        return fail_count > 3
+
+
+def test_waterline_refills_until_ok():
+    from handler.proxy_service import ProxyService
+
+    pool = FakePool()   # 空池
+    svc = ProxyService(checker=FakeGoodChecker(), pool=pool,
+                       fetcher=FakeFetcher(per_round=5))
+
+    service_min = {"cn": {"all": 12, "safe": 3}}
+    levels, rounds, ok = svc.ensure_waterlines(
+        service_min=service_min, max_per_source=100, max_stall_rounds=2)
+    # 每轮新增5个，需12个 → 3轮填满（5*3=15>=12）
+    assert ok is True, (levels, rounds)
+    assert rounds == 3
+    assert levels[("cn", "all")][0] >= 12
+    assert levels[("cn", "safe")][0] >= 3
+
+
+def test_waterline_stops_when_stalled():
+    from handler.proxy_service import ProxyService
+
+    pool = FakePool()
+    pool.put(Proxy(proxy="1.1.1.1:80", region="CN", score=3))
+    svc = ProxyService(checker=FakeGoodChecker(), pool=pool,
+                       fetcher=FakeFetcher(per_round=0))  # 源没货
+
+    service_min = {"cn": {"all": 10}}
+    levels, rounds, ok = svc.ensure_waterlines(
+        service_min=service_min, max_stall_rounds=2)
+    # 源每轮0新增 → 2轮后停，不达标
+    assert ok is False
+    assert rounds == 2
+
+
 if __name__ == "__main__":
     test_check_pool_eliminates_dead()
     test_get_business_semantics()
     test_get_stable_quality()
-    print("test_check_pool_eliminates_dead OK")
-    print("test_get_business_semantics OK")
-    print("test_get_stable_quality OK")
+    test_waterline_service_levels()
+    test_waterline_refills_until_ok()
+    test_waterline_stops_when_stalled()
     print("ALL PASSED")
