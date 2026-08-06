@@ -40,11 +40,38 @@ def test_success_resets_fail_count():
         def _http_check(self, proxy):
             return True
 
+        def _https_check(self, proxy):
+            return True
+
     c = FakeOkChecker()
     p = Proxy(proxy="1.2.3.4:8080", fail_count=5)
     ok, fc = c.check(p)
     assert ok is True
     assert fc == 0  # 成功一次就把之前的失败清零
+    assert p.https is True  # http https 都通 → 支持 https
+
+
+def test_https_flag_follows_https_check():
+    # http 通、https 不通 → 代理可用但 https 标记为 False
+    class NoHttpsChecker(Checker):
+        def _http_check(self, proxy):
+            return True
+
+        def _https_check(self, proxy):
+            return False
+
+    c = NoHttpsChecker()
+    p = Proxy(proxy="1.2.3.4:8080")
+    ok, fc = c.check(p)
+    assert ok is True
+    assert p.https is False
+
+    # http 不通 → 根本不查 https，https 保持 False
+    c = FakeFailChecker()
+    p = Proxy(proxy="1.2.3.4:8080", https=True)  # 旧值会被清掉
+    ok, fc = c.check(p)
+    assert ok is False
+    assert p.https is False
 
 
 def test_format_check_rejects_bad_proxy():
@@ -64,7 +91,8 @@ def test_format_check_rejects_bad_proxy():
 
 if __name__ == "__main__":
     for fn in [test_failure_count_grows, test_elimination_after_max_fail,
-               test_success_resets_fail_count, test_format_check_rejects_bad_proxy]:
+               test_success_resets_fail_count, test_format_check_rejects_bad_proxy,
+               test_https_flag_follows_https_check]:
         fn()
         print(f"{fn.__name__} OK")
     print("ALL PASSED")

@@ -1,10 +1,13 @@
-"""校验器：判断一个代理是否可用，并维护淘汰计数。
+"""校验器：判断一个代理是否可用，并维护淘汰计数，记录 https 能力。
 
 核心思路：
-  1. 通过代理向测试目标(http://www.baidu.com)发请求
-  2. 拿到 200 → 可用，fail_count 归零
-  3. 超时/异常 → 不可用，fail_count +1
-  4. fail_count 超过阈值(MAX_FAIL_COUNT) → 判定该淘汰
+  1. 格式校验：ip:port 合不合法（不合规直接失败，不发网络请求）
+  2. http 校验：通过代理访问 HTTP_URL，拿到 200 → 可用
+  3. https 校验：http 过了才验（通过代理访问 HTTPS_URL），决定 proxy.https
+  4. 失败累计 fail_count，超过阈值(MAX_FAIL_COUNT) → 判定该淘汰
+
+验证目标（HTTP_URL / HTTPS_URL）做成可配置：默认 baidu 测国内存活、
+qq 测 https。以后想换目标（如国外站），改这里或传入即可。
 
 参考资料：learn/02_httpx_代理验证入门.py（httpx 用法与踩坑）
 """
@@ -13,8 +16,9 @@ import re
 
 import httpx
 
-# 测试目标：我们判别"代理能否访问外网"的基准站点
+# 默认验证目标（可被构造函数覆盖）
 HTTP_URL = "http://www.baidu.com"
+HTTPS_URL = "https://www.qq.com"
 # 请求超时：超过就不等了，算失败
 TIMEOUT = 5
 # 淘汰阈值：连续失败超过这个数，就认为代理死了
@@ -25,25 +29,37 @@ PROXY_FORMAT = re.compile(
 
 
 class Checker:
-    def check(self, proxy):
-        """验证一个 proxy，返回它的最新状态（把 fail_count 更新到内部）。
+    def __init__(self, http_url=HTTP_URL, https_url=HTTPS_URL,
+                 timeout=TIMEOUT):
+        self.http_url = http_url
+        self.https_url = https_url
+        self.timeout = timeout
 
-        注意：这里是纯验证，只返回 (成功与否, 失败次数)，不决定是否删除，
-        删除与否由调用方（调度器）依据 MAX_FAIL_COUNT 决定。
+    def check(self, proxy):
+        """验证一个 proxy，更新其状态（fail_count / https / check_count）。
+
+        返回 (是否可用, fail_count)。
+        是否删除由调用方（调度器）依据 MAX_FAIL_COUNT 决定。
         """
         # 前置：格式不合法根本不用发网络请求，直接判失败
         if not self._format_check(proxy):
             proxy.fail_count += 1
             proxy.check_count += 1
+            proxy.last_status = False
             return False, proxy.fail_count
 
-        ok = self._http_check(proxy)
-        if ok:
+        http_ok = self._http_check(proxy)
+        if http_ok:
+            # http 可用 → 进一步查它是否支持 https
+            proxy.https = self._https_check(proxy)
             proxy.fail_count = 0
+            proxy.last_status = True
         else:
             proxy.fail_count += 1
+            proxy.last_status = False
+            proxy.https = False
         proxy.check_count += 1
-        return ok, proxy.fail_count
+        return http_ok, proxy.fail_count
 
     def should_eliminate(self, fail_count):
         """判断该代理是否该被淘汰。"""
@@ -54,10 +70,18 @@ class Checker:
         return bool(PROXY_FORMAT.match(proxy.proxy))
 
     def _http_check(self, proxy):
-        """通过代理访问 HTTP_URL，能拿到 200 就返回 True。"""
-        proxy_url = f"http://{proxy.proxy}"
+        """通过代理访问 http 目标，能拿到 200 就返回 True。"""
+        return self._fetch_ok(self.http_url, proxy.proxy)
+
+    def _https_check(self, proxy):
+        """通过代理访问 https 目标，能拿到 200 就返回 True（支持 https）。"""
+        return self._fetch_ok(self.https_url, proxy.proxy)
+
+    def _fetch_ok(self, url, proxy_addr):
+        proxy_url = f"http://{proxy_addr}"
         try:
-            r = httpx.get(HTTP_URL, proxy=proxy_url, timeout=TIMEOUT, verify=False)
+            r = httpx.get(url, proxy=proxy_url, timeout=self.timeout,
+                          verify=False)
             return r.status_code == 200
         except Exception:
             return False
