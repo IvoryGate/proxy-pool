@@ -152,7 +152,7 @@ class ProxyService:
         return levels, rounds, ok
 
     def get(self, need="any", https=False, security=None, quality=None,
-            fast=False):
+            fast=False, max_latency_ms=None):
         """按业务语义取一个代理（不删除）。
 
         need       : 'cn' | 'global' | 'any' —— 要能访问哪
@@ -161,6 +161,7 @@ class ProxyService:
         quality    : 'stable1'|'stable2'|'stable3' 按稳定性档位筛选
                      （stable 视为 stable1，None 不要求）
         fast       : True 只选低延迟的
+        max_latency_ms : 只返回延迟不超过该值（毫秒）的代理
         策略：先按条件粗筛一批候选，再按信任分加权挑一个（越稳越优先）。
         """
         region = None if need in ("any", None) else need
@@ -183,6 +184,10 @@ class ProxyService:
         if fast:
             candidates = [p for p in candidates
                           if p.latency_ms is not None and p.latency_ms <= 3000]
+        if max_latency_ms is not None:
+            candidates = [p for p in candidates
+                          if p.latency_ms is not None
+                          and p.latency_ms <= max_latency_ms]
         if not candidates:
             return None
 
@@ -202,3 +207,73 @@ class ProxyService:
         region = None if need in ("any", None) else need
         safe = (security == "strict")
         return self.pool.pop(https=https, region=region, safe=safe)
+
+    def get_many(self, count=10, need="any", https=False, security=None,
+                 quality=None, fast=False, max_latency_ms=None):
+        """按业务语义批量取多个代理（不删除）。
+
+        参数与 get() 一致，多一个 count（每批取的候选数放大，确保够 N 个）。
+        逐个按信任分加权选优、去重，返回尽量多的匹配代理（可能少于 count）。
+        """
+        region = None if need in ("any", None) else need
+        safe = (security == "strict")
+        # 候选要多取一些，才有空间去重选优
+        want = max(count, 20)
+        candidates = self.pool.get_many(want, https=https, region=region,
+                                        safe=safe)
+        if not candidates:
+            return []
+
+        if security == "anon":
+            candidates = [p for p in candidates
+                          if p.anonymous in ("elite", "anonymous")]
+        if quality:
+            from config.services import STABLE_LEVELS
+            q = "stable1" if quality == "stable" else quality
+            min_score = STABLE_LEVELS.get(q)
+            if min_score:
+                candidates = [p for p in candidates if p.score >= min_score]
+        if fast:
+            candidates = [p for p in candidates
+                          if p.latency_ms is not None and p.latency_ms <= 3000]
+        if max_latency_ms is not None:
+            candidates = [p for p in candidates
+                          if p.latency_ms is not None
+                          and p.latency_ms <= max_latency_ms]
+
+        # 去重 + 按信任分加权挑 count 个（分高优先，但不绝对按分序）
+        seen = set()
+        picked = []
+        while candidates and len(picked) < count:
+            weights = [max(1, p.score + 1) for p in candidates]
+            total = sum(weights)
+            r = random.random() * total
+            acc = 0
+            idx = len(candidates) - 1
+            for i, w in enumerate(weights):
+                acc += w
+                if r <= acc:
+                    idx = i
+                    break
+            p = candidates.pop(idx)
+            if p.proxy not in seen:
+                seen.add(p.proxy)
+                picked.append(p)
+        return picked
+
+    def list_all(self, page=1, size=20, https=False, need="any"):
+        """分页返回池内代理明细（调试/维护用，不删除）。
+
+        page 从 1 起；size 每页条数（默认 20，上限 100）。
+        返回 (总数, 本页列表[Proxy])，按信任分降序。
+        """
+        region = None if need in ("any", None) else need
+        proxies = self.pool.getAll(https=https)
+        if region == "cn":
+            proxies = [p for p in proxies if p.region == "CN"]
+        elif region == "global":
+            proxies = [p for p in proxies if p.region != "CN"]
+        proxies.sort(key=lambda p: p.score, reverse=True)
+        total = len(proxies)
+        start = (page - 1) * size
+        return total, proxies[start:start + size]

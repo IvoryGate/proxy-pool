@@ -11,7 +11,8 @@ class RandomStrategy(BaseStrategy):
     name = "random"
 
     # service.get 认识的参数（其余如 session 不传给随机策略）
-    _SERVICE_PARAMS = ("need", "https", "security", "quality", "fast")
+    _SERVICE_PARAMS = ("need", "https", "security", "quality", "fast",
+                       "max_latency_ms")
 
     def get(self, service, **params):
         service_kwargs = {k: params[k] for k in self._SERVICE_PARAMS

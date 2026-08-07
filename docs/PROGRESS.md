@@ -6,13 +6,12 @@
 
 ## 当前进度
 
-**阶段 13 完成（Docker Compose 容器化部署）**
-> Redis host 环境变量化 + API 关 debug + requirements 加 gunicorn；
-> 编写 Dockerfile / docker-compose.yml / .dockerignore 三服务编排（redis/api/scheduler）；
-> 解决 WSL2 装 Docker Engine + 镜像加速器被墙 + scheduler PYTHONPATH 等坑。
-> 验证：容器内调度器自动补源（11min global 0→184）、4-worker gunicorn 取用正常、
-> Redis 隔离 + AOF 持久化到 volume、restart 自动拉起。
-> 见 [`13-docker容器化部署.md`](./13-docker容器化部署.md)。
+**阶段 14 完成（业务 API 基础供给）**
+> 确立项目边界：本仓库只做 IP 基础供给（供网关项目取用），业务能力（鉴权/
+> 黑白名单/用量统计/粘性会话）划到另起的网关项目。新增批量取用 `/get?count=N`、
+> 延迟筛选 `max_latency_ms`、分页列表 `/list`、健康检查 `/health`。
+> 容器内验证全部通过，global 各层水位达标、status:ok。
+> 见 [`14-业务API基础供给.md`](./14-业务API基础供给.md)。
 
 ## 阶段总览
 
@@ -33,14 +32,15 @@
 | 11 | 源调研 + 验证标准重构 + 抽样 + stable 分级 | [`11-源调研与验证标准重构.md`](./11-源调研与验证标准重构.md) | ✅ |
 | 12 | 调度器稳定性 + 上线就绪评估 | [`12-调度器稳定性与上线评估.md`](./12-调度器稳定性与上线评估.md) | ✅ |
 | 13 | Docker Compose 容器化部署 | [`13-docker容器化部署.md`](./13-docker容器化部署.md) | ✅ |
+| 14 | 业务 API 基础供给（批量/延迟/分页/健康） | [`14-业务API基础供给.md`](./14-业务API基础供给.md) | ✅ |
 
 ---
 
 ## 待办 / 下一步
 
-- 新增业务 API（鉴权/批量取用/分页列表/健康检查/统计/黑白名单等）。
 - 生产部署：代码 + compose 同步到生产 Ubuntu 服务器，一条命令上线。
-- 上线后观测水位 + 交付 IP 连通率，稳定后定受正式上线。
+- 观察水位 + 交付 IP 连通率，稳定后定受正式上线。
+- 网关新项目：基于本仓库批量取用 → opencode/zen 连通 → 封装 API-Key 服务。
 
 ## 历史存档
 
