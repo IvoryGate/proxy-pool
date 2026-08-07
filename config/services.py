@@ -26,11 +26,11 @@ SERVICE_MIN = {
         "stable3": 0,
     },
     "global": {
-        "all": 50,
-        "safe": 10,
-        "stable1": 20,
-        "stable2": 10,
-        "stable3": 5,
+        "all": 1000,
+        "safe": 100,
+        "stable1": 400,
+        "stable2": 200,
+        "stable3": 100,
     },
 }
 
