@@ -185,12 +185,15 @@ class Checker:
         return http_ok, proxy.fail_count
 
     def _update_score(self, proxy, ok):
-        """更新信任分：成功 +1，失败 -1。累计反映长期稳定性。
+        """更新信任分：成功 +1、失败 -2（失败惩罚更重），封顶 10。
 
-        注意：fail_count 是"连续失败"，会被重置；score 是"累计信任"，
-        不因一次成功清零，能反映代理长期靠不靠谱。
+        注意：fail_count 是"连续失败"，会被重置；score 是"累计信任"。
+        封顶避免分数无限上涨导致 stable 分级（stable1=1/2=3/3=5）失效。
         """
-        proxy.score = max(0, proxy.score + (1 if ok else -1))
+        if ok:
+            proxy.score = min(10, proxy.score + 1)
+        else:
+            proxy.score = max(0, proxy.score - 2)
 
     def _probe_safety(self, proxy):
         """安全探测：匿名性 + 篡改，只打标签不判生死。

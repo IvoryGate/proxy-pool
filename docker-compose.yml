@@ -4,6 +4,9 @@ services:
     restart: unless-stopped
     volumes:
       - redis-data:/data
+    ports:
+      # 映射到宿主回环，供同机 poverty-gateway 等复用共享状态
+      - "127.0.0.1:6379:6379"
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
