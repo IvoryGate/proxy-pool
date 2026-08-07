@@ -116,7 +116,7 @@ class ProxyService:
                 if cur < mn]
 
     def ensure_waterlines(self, service_min=None, max_per_source=None,
-                          max_stall_rounds=None):
+                          max_stall_rounds=None, max_rounds=None):
         """目标驱动补源：把低于下限的服务补齐。
 
         循环：
@@ -124,10 +124,14 @@ class ProxyService:
           2. 全达标 → 停
           3. 有缺口 → 跑一轮 refresh（重跑所有源），统计新增
           4. 连续 max_stall_rounds 轮无新增 → 视为源耗尽，停
+          5. 累计跑满 max_rounds 轮 → 硬性停（防 job 单实例霸占调度器，
+             给复核 / 下一轮补源留出时间；配合第 4 条双保险）
         返回 (各服务水位, 补源轮数, 是否达标)。
         """
         from config.services import MAX_STALL_ROUNDS as _DEFAULT_STALL
+        from config.services import MAX_WATERLINE_ROUNDS as _DEFAULT_ROUNDS
         stall_rounds = max_stall_rounds or _DEFAULT_STALL
+        max_rounds = max_rounds or _DEFAULT_ROUNDS
 
         levels = self.service_levels(service_min)
         rounds = 0
@@ -135,6 +139,8 @@ class ProxyService:
         while self.below_waterline(levels):
             added, _ = self.refresh(max_per_source=max_per_source)
             rounds += 1
+            if rounds >= max_rounds:
+                break
             if added == 0:
                 stalls += 1
                 if stalls >= stall_rounds:
