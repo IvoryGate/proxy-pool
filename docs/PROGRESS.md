@@ -6,14 +6,13 @@
 
 ## 当前进度
 
-**阶段 12 完成（调度器稳定性修复 + 上线就绪评估）**
-> 定位 waterline job 无限补源霸占调度器实例、挤掉复核的根因（cn 硬性下限与
-> 免费 CN 源现实冲突 → 补源循环永不退出）；cn 降级为不设硬下限（用户决策：
-> cn 不再做硬性要求，重点系统稳定）；新增 MAX_WATERLINE_ROUNDS 补源总轮次上限
-> （与 MAX_STALL_ROUNDS 双保险）。修复后：waterline 达标即退（0 轮），复核恢复
-> 每 1min 稳定跑。上线评估：交付 IP 真实转发 30/30，global 各层水位全达标，
-> Redis RDB 持久化正常 → **基本可上线**，但需补进程守护 + API 关 debug。
-> 见 [`12-调度器稳定性与上线评估.md`](./12-调度器稳定性与上线评估.md)。
+**阶段 13 完成（Docker Compose 容器化部署）**
+> Redis host 环境变量化 + API 关 debug + requirements 加 gunicorn；
+> 编写 Dockerfile / docker-compose.yml / .dockerignore 三服务编排（redis/api/scheduler）；
+> 解决 WSL2 装 Docker Engine + 镜像加速器被墙 + scheduler PYTHONPATH 等坑。
+> 验证：容器内调度器自动补源（11min global 0→184）、4-worker gunicorn 取用正常、
+> Redis 隔离 + AOF 持久化到 volume、restart 自动拉起。
+> 见 [`13-docker容器化部署.md`](./13-docker容器化部署.md)。
 
 ## 阶段总览
 
@@ -33,14 +32,15 @@
 | 10 | 跑满验证 + 水位控制（8→250个） | [`10-跑满验证与水位控制.md`](./10-跑满验证与水位控制.md) | ✅ |
 | 11 | 源调研 + 验证标准重构 + 抽样 + stable 分级 | [`11-源调研与验证标准重构.md`](./11-源调研与验证标准重构.md) | ✅ |
 | 12 | 调度器稳定性 + 上线就绪评估 | [`12-调度器稳定性与上线评估.md`](./12-调度器稳定性与上线评估.md) | ✅ |
+| 13 | Docker Compose 容器化部署 | [`13-docker容器化部署.md`](./13-docker容器化部署.md) | ✅ |
 
 ---
 
 ## 待办 / 下一步
 
-- 进程守护（systemd / supervisor）+ API 关 debug、上 gunicorn 多 worker。
-- 持续观察 global 各层水位 + 交付 IP 连通率，验证长期稳定后正式上线。
-- 可选：cn 找到好源后再抬高下限。
+- 新增业务 API（鉴权/批量取用/分页列表/健康检查/统计/黑白名单等）。
+- 生产部署：代码 + compose 同步到生产 Ubuntu 服务器，一条命令上线。
+- 上线后观测水位 + 交付 IP 连通率，稳定后定受正式上线。
 
 ## 历史存档
 

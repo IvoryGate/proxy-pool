@@ -15,14 +15,20 @@
 
 import random
 
+import os
+
 import redis
 
 from model.proxy import Proxy
 
 
 class RedisPool:
-    def __init__(self, host="127.0.0.1", port=6379, db=0,
+    def __init__(self, host=None, port=None, db=0,
                  password=None, table_name="use_proxy"):
+        # 默认从环境变量读，支持 Docker 里连服务名；都没设才回落本地
+        # （REDIS_HOST=redis, REDIS_PORT=6379 在 docker-compose 里注入）
+        host = host or os.environ.get("REDIS_HOST", "127.0.0.1")
+        port = int(port or os.environ.get("REDIS_PORT", 6379))
         self._redis = redis.Redis(
             host=host, port=port, db=db, password=password,
             decode_responses=True,

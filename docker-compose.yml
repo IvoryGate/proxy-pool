@@ -1,0 +1,41 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    command: gunicorn --bind 0.0.0.0:5010 --workers 4 --access-logfile - --error-logfile - 'api.proxy_api:create_app()'
+    ports:
+      - "5010:5010"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    command: python helper/scheduler.py
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # 脚本直接运行会以脚本目录为 sys.path[0]，需手动加入项目根，否则 import handler 失败
+      - PYTHONPATH=/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:

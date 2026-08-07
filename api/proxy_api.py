@@ -73,4 +73,6 @@ def create_app(service=None, strategies=None):
 
 
 if __name__ == "__main__":
-    create_app().run(host="0.0.0.0", port=5010, debug=True)
+    # 生产环境用 gunicorn 跑（见 Dockerfile / docker-compose.yml），
+    # 这里仅保留本地开发入口并关闭 debug/reloader，避免调试器暴露。
+    create_app().run(host="0.0.0.0", port=5010, debug=False)
