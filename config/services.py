@@ -42,12 +42,14 @@ STABLE_LEVELS = {
 }
 
 # 补源循环：连续多少轮无新增就停止（避免无限追）
-MAX_STALL_ROUNDS = 3
+MAX_STALL_ROUNDS = 2
 # 补源循环：单次最多补多少轮（含"每轮都新增"的情况），防止 job 单实例霸占调度器
-# （配合 MAX_STALL_ROUNDS 双保险：无新增 3 轮停、或累计 MAX_WATERLINE_ROUNDS 轮必停）
-MAX_WATERLINE_ROUNDS = 4
-# 每轮源抓多少（水塘抽样，允许每次取不同批次，可放心取多些）
-MAX_PER_SOURCE = 300
+# （配合 MAX_STALL_ROUNDS 双保险：无新增 2 轮停、或累计 MAX_WATERLINE_ROUNDS 轮必停）
+# 注意：一轮 refresh 抓取+验证要 40-80s，轮数多了单次 job 跑不完 3 分钟周期，
+# 下个周期会 skip（补源严重滞后）。2 轮内快速返回，保证每周期都能补。
+MAX_WATERLINE_ROUNDS = 2
+# 每轮源抓多少（直接取前 N；源已并行抓取，量别太大，验证才是瓶颈）
+MAX_PER_SOURCE = 120
 
 
 def service_candidates():
