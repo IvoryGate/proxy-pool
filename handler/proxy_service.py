@@ -30,9 +30,26 @@ class ProxyService:
         验证通过但 region 为空的代理会做一次 IP 归属地探测补标签
         （hproxy 等纯文本源的代理才有这情况），否则被错分到 global。
         返回 (新增数量, 本次可用数量)。
+
+        优化：验证前先按"池里是否已有"过滤，只验证真正的新 IP——
+        大批量抓取时大量是重复/已存在，跳过它们能省下大部分验证时间。
         """
         proxies = list(self.fetcher.run(max_per_source=max_per_source))
-        ok_count, pairs = self.checker.check_all(proxies)
+
+        # 已有地址集合（供过滤重复）
+        existing = set()
+        try:
+            for p in self.pool.getAll():
+                existing.add(p.proxy)
+        except Exception:
+            existing = set()
+
+        # 只验证新 IP（池里没有的）；格式无效的直接筛掉
+        from helper.check import PROXY_FORMAT
+        new_proxies = [p for p in proxies
+                       if p.proxy not in existing
+                       and PROXY_FORMAT.match(p.proxy)]
+        ok_count, pairs = self.checker.check_all(new_proxies)
 
         # 验证通过且 region 为空的 → 补打 region 标签
         fresh = [p for p, _ in pairs if p.last_status and not p.region]

@@ -8,8 +8,13 @@
 """
 
 import importlib
+import itertools
 import os
+import queue
 import random
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from model.proxy import Proxy
 from fetcher.base import BaseFetcher
@@ -37,6 +42,50 @@ def _discover_fetcher_classes():
     return classes
 
 
+def _timed_items(items, timeout, max_scan=None):
+    """把源抓取流包成"限时消费"：超过 timeout 秒就中断，不再产出。
+
+    慢源（一次 HTTP 请求可能卡 30s+）不能拖垮整个补源循环，所以给每个
+    源一个总时限。实现：在独立线程里消费源生成器，主线程限时接收。
+    线程结束前把最终结果放进 queue，主线程靠超时退出循环。
+    """
+    q = queue.Queue(maxsize=128)
+    stop = threading.Event()
+
+    def worker():
+        try:
+            count = 0
+            for item in items:
+                if stop.is_set():
+                    return
+                if max_scan is not None and count >= max_scan:
+                    return
+                q.put(item)
+                count += 1
+        except Exception:
+            pass
+        finally:
+            q.put(None)  # 结束哨兵
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stop.set()  # 超时，通知 worker 停止
+            break
+        try:
+            item = q.get(timeout=remaining)
+        except queue.Empty:
+            break
+        if item is None:
+            break
+        yield item
+    stop.set()
+    t.join(timeout=0.5)
+
+
 class Fetcher:
     def __init__(self, pool=None):
         """pool：可选，一个提供 get()/put() 的对象（如 RedisPool）。
@@ -45,12 +94,17 @@ class Fetcher:
         """
         self.pool = pool
 
-    def run(self, fetcher_classes=None, max_per_source=None):
+    def run(self, fetcher_classes=None, max_per_source=None,
+            source_timeout=15, max_workers=8):
         """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。
 
         fetcher_classes：要跑的源类列表，默认自动扫描 sources/ 目录。
         max_per_source：每个源最多抓取多少个代理，None 表示不限量。
             防止超大源（如 hproxy 2.6 万）阻塞整个调度。
+        source_timeout：单个源抓取的总时限（秒）。慢源超时即中断，
+            不拖垮整体。默认 15s。
+        max_workers：并行抓源的线程数。默认 8 —— 慢源不再拖累整体，
+            总耗时 ≈ 最慢单个源，而非所有源耗时之和。
         """
         if fetcher_classes is None:
             fetcher_classes = _discover_fetcher_classes()
@@ -58,37 +112,65 @@ class Fetcher:
             random.shuffle(fetcher_classes)
 
         proxy_dict = {}   # {"1.2.3.4:8080": Proxy, ...}，key 保证去重
+        dict_lock = threading.Lock()
+        pool_lock = threading.Lock()
 
-        for cls in fetcher_classes:
+        def grab(cls):
+            """在独立线程里抓一个源，结果并入 proxy_dict。"""
             fetcher = cls()
             name = fetcher.name
-            # 抓源前：从池子里借一个代理给源用（绕反爬），抓完还回
-            src_proxy = self.pool.get() if self.pool else None
-            if src_proxy:
-                fetcher.proxy = src_proxy.proxy
+            src_proxy = None
+            if self.pool:
+                with pool_lock:
+                    src_proxy = self.pool.get()
+                if src_proxy:
+                    fetcher.proxy = src_proxy.proxy
             try:
-                # max_per_source 有值时：对源的 fetch 流做水塘抽样（等概率随机取 N 个）
-                # 而不是取前 N 个 —— 大源（如 hproxy 2 万+）反复取前 N 会漏掉更新的代理
                 source_items = fetcher.fetch()
                 if max_per_source is not None:
-                    source_items = reservoir_sample(source_items, max_per_source)
+                    # 直接取前 N：代理列表源顺序无关，无须遍历全流做
+                    # 等概率抽样（reservoir_sample 遍历大源很慢）。
+                    source_items = itertools.islice(
+                        source_items, max_per_source)
+                local = {}
                 for item in source_items:
-                    # 源可以 yield 字符串 "ip:port"，也可以 yield Proxy（带 region 等信息）
+                    if item is None:
+                        break
                     item_proxy = item.proxy if isinstance(item, Proxy) else item
-                    if item_proxy in proxy_dict:
-                        # 同一个代理被多个源抓到：标记来源，不重复存
-                        existing = proxy_dict[item_proxy]
+                    if item_proxy in local:
+                        existing = local[item_proxy]
                         if not existing.source:
                             existing.source = name
                     else:
                         p = item if isinstance(item, Proxy) else Proxy(proxy=item)
                         if not p.source:
                             p.source = name
-                        proxy_dict[item_proxy] = p
+                        local[item_proxy] = p
+                with dict_lock:
+                    for addr, p in local.items():
+                        if addr in proxy_dict:
+                            existing = proxy_dict[addr]
+                            if not existing.source:
+                                existing.source = name
+                        else:
+                            proxy_dict[addr] = p
+            except Exception:
+                pass
             finally:
-                # 抓完把借出去的代理还回池子
                 if src_proxy and self.pool:
-                    self.pool.put(src_proxy)
+                    with pool_lock:
+                        self.pool.put(src_proxy)
+
+        with ThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix="fetch") as ex:
+            futures = [ex.submit(grab, cls) for cls in fetcher_classes]
+            # 限时等待：最慢源超时后整体结束（防单源永久卡住拖死补源）
+            try:
+                for fut in as_completed(futures, timeout=source_timeout * 2):
+                    fut.result()
+            except (TimeoutError, Exception):
+                pass  # 有源超时：已完成的结果保留，未完成的丢弃
 
         for proxy in proxy_dict.values():
             yield proxy

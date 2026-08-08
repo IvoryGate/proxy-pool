@@ -49,6 +49,62 @@ def yield_unique_proxies(proxies):
             yield proxy
 
 
+def fetch_text(url, jsdelivr_url=None, timeout=20, retries=1):
+    """双通道抓取代理列表文本：raw 短超时快速失败，jsdelivr 稳定兜底。
+
+    国内服务器直连 raw.githubusercontent.com 常抖动（1s~60s 不定），
+    jsdelivr CDN 稳定但需要 tag。策略：raw 用短超时(做最快路径)，
+    一旦超时/失败立即切到 jsdelivr（稳定通道），谁成功返回谁。
+    都失败返回 (None, None)。
+
+    jsdelivr_url 传 None 时自动把 GitHub 仓库地址转成 jsdelivr 地址。
+    """
+    import httpx
+    # raw 通道：短超时快速失败（抖了就立即换 jsdelivr，不干等）。
+    # 注意用 httpx.Timeout 分别设 connect/read —— 只设 read 时连接卡住
+    # 仍会被内核 TCP 超时拖住（实测能卡 30s+）。
+    raw_timeout = min(timeout, 8)
+    try:
+        r = httpx.get(url, timeout=httpx.Timeout(
+            raw_timeout, connect=min(raw_timeout, 5), read=raw_timeout,
+            pool=raw_timeout, write=raw_timeout))
+        if r.status_code == 200:
+            return r.text, url
+    except Exception:
+        pass
+    # jsdelivr 通道：稳定，多试几次
+    if jsdelivr_url:
+        cand = jsdelivr_url
+    elif "raw.githubusercontent.com" in url:
+        # raw -> jsdelivr：把 /user/repo/branch/path 转成 /user/repo@branch/path
+        # （jsdelivr 必须有 @branch，否则 404）
+        parts = url.split("raw.githubusercontent.com/", 1)
+        if len(parts) == 2:
+            seg = parts[1].split("/", 2)   # [user, repo, branch/path]
+            if len(seg) == 3:
+                user, repo, rest = seg
+                branch, _, path = rest.partition("/")
+                cand = (f"https://cdn.jsdelivr.net/gh/{user}/{repo}"
+                        f"@{branch}/{path}")
+            else:
+                cand = None
+        else:
+            cand = None
+    else:
+        return None, None  # 非 GitHub 源且 raw 失败：无兜底
+    if not cand:
+        return None, None
+    to = httpx.Timeout(20, connect=5, read=20, pool=20, write=20)
+    for _ in range(retries):
+        try:
+            r = httpx.get(cand, timeout=to)
+            if r.status_code == 200:
+                return r.text, cand
+        except Exception:
+            continue
+    return None, None
+
+
 def reservoir_sample(iterable, k, max_scan=5000):
     """水塘抽样：从流式 iterable 中**等概率**随机抽 k 个。
 

@@ -36,13 +36,22 @@ class BaseFetcher:
         """爬取本源的代理，yield "host:port" 字符串。子类必须实现。"""
         raise NotImplementedError
 
-    def _http_get(self, url, timeout=10, headers=None, **kwargs):
-        """发 GET 请求。若设置了 self.proxy 就通过该代理抓取（绕反爬）。"""
+    def _http_get(self, url, timeout=8, headers=None, **kwargs):
+        """发 GET 请求。若设置了 self.proxy 就通过该代理抓取（绕反爬）。
+
+        默认 timeout 8s，并拆 connect/read 超时——只设 read 时连接卡住
+        会被内核 TCP 拖 30s+（实测），慢源会拖垮补源循环。
+        """
         try:
             if self.proxy:
                 kwargs["proxy"] = f"http://{self.proxy}"
-            return httpx.get(url, timeout=timeout, headers=headers or {
-                "User-Agent": util.random_user_agent(),
-            }, **kwargs)
+            return httpx.get(
+                url,
+                timeout=httpx.Timeout(
+                    timeout, connect=min(timeout, 5), read=timeout,
+                    pool=timeout, write=timeout),
+                headers=headers or {
+                    "User-Agent": util.random_user_agent(),
+                }, **kwargs)
         except Exception:
             return None

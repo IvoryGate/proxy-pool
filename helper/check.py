@@ -63,7 +63,12 @@ class Checker:
     def __init__(self, region_targets=None, timeout=TIMEOUT,
                  probe_safety=True):
         self.region_targets = region_targets or REGION_TARGETS
-        self.timeout = timeout
+        # timeout 拆 connect/read：只设 read 时，连不上的死代理会被内核
+        # TCP 超时拖住（几十秒），整批并发验证被拖慢。connect 短超时让
+        # 死代理快速失败，验证吞吐显著提升。
+        self.timeout = httpx.Timeout(
+            timeout, connect=min(timeout, 2), read=timeout,
+            pool=timeout, write=timeout)
         # 安全/质量探针开关：默认开。测试关掉（探针要联网，测试不依赖网络）。
         self.probe_safety = probe_safety
 
