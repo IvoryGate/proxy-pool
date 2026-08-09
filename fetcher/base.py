@@ -50,6 +50,7 @@ class BaseFetcher:
                 timeout=httpx.Timeout(
                     timeout, connect=min(timeout, 5), read=timeout,
                     pool=timeout, write=timeout),
+                follow_redirects=True,
                 headers=headers or {
                     "User-Agent": util.random_user_agent(),
                 }, **kwargs)

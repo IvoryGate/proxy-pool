@@ -48,8 +48,10 @@ MAX_STALL_ROUNDS = 2
 # 注意：一轮 refresh 抓取+验证要 40-80s，轮数多了单次 job 跑不完 3 分钟周期，
 # 下个周期会 skip（补源严重滞后）。2 轮内快速返回，保证每周期都能补。
 MAX_WATERLINE_ROUNDS = 2
-# 每轮源抓多少（直接取前 N；源已并行抓取，量别太大，验证才是瓶颈）
-MAX_PER_SOURCE = 120
+# 每轮源抓多少（直接取前 N；源已并行抓取，量别太大，验证才是瓶颈）。
+# 120->250：主要大源(thespeedx/jetkai/monosans/databay)候选质量不错，
+# 适度提高抓取量让它们贡献更多；验证仍是瓶颈，250 在可接受范围。
+MAX_PER_SOURCE = 250
 
 
 def service_candidates():
