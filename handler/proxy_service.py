@@ -44,11 +44,13 @@ class ProxyService:
         except Exception:
             existing = set()
 
-        # 只验证新 IP（池里没有的）；格式无效的直接筛掉
-        from helper.check import PROXY_FORMAT
+        # 只验证新 IP（池里没有的）；格式无效的直接筛掉。
+        # _valid_ipv4 拦截带前导零的脏 IP（141.000.11.253），避免 httpx 崩溃。
+        from helper.check import PROXY_FORMAT, _valid_ipv4
         new_proxies = [p for p in proxies
                        if p.proxy not in existing
-                       and PROXY_FORMAT.match(p.proxy)]
+                       and PROXY_FORMAT.match(p.proxy)
+                       and _valid_ipv4(p.proxy)]
         ok_count, pairs = self.checker.check_all(new_proxies)
 
         # 验证通过且 region 为空的 → 补打 region 标签

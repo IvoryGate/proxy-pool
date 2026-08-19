@@ -18,17 +18,18 @@ from fetcher.util import parse_proxies_from_text, yield_unique_proxies
 class ScdnFetcher(BaseFetcher):
     name = "scdn"
     url = "https://proxy.scdn.io/"
+    # 分页抓取页数：每页 per_page=100 个候选，多抓几页攒量。
+    page_count = 3
 
     def fetch(self):
-        api_url = ("https://proxy.scdn.io/get_proxies.php?"
-                   "protocol=&country=&per_page=100&page=1")
-        try:
-            r = httpx.get(api_url, timeout=10)
-            html = r.text
-        except Exception:
-            return  # 源挂了就当没抓到，不影响其它源
-
-        proxies = parse_proxies_from_text(html)
+        proxies = []
+        for page in range(1, self.page_count + 1):
+            api_url = ("https://proxy.scdn.io/get_proxies.php?"
+                       f"protocol=&country=&per_page=100&page={page}")
+            r = self._http_get(api_url, timeout=10)
+            if not r:
+                continue
+            proxies += parse_proxies_from_text(r.text)
 
         for proxy in yield_unique_proxies(proxies):
             yield proxy

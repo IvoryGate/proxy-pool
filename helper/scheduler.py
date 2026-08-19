@@ -12,7 +12,10 @@ from handler.proxy_service import ProxyService
 # 检查水位 / 复核间隔（分钟）。
 # 免费代理寿命分钟级：复核太快删不干净、太慢留死代理；补源太慢跟不上死亡速度。
 # 实测：复核 1 分钟、补源 3 分钟，能让池子"边漏边补"保持水位。
-WATERLINE_INTERVAL = 3
+# 2026-08 补源提速（多页抓取）后单轮 refresh 耗时显著上升（候选翻倍、验证更久），
+# 3 分钟周期内 2 轮补源跑不完会导致 job skip（补源频率反而下降）。
+# 放宽到 5 分钟：给 2 轮补源留足时间，复核仍 1 分钟兜底。
+WATERLINE_INTERVAL = 5
 CHECK_INTERVAL = 1
 
 

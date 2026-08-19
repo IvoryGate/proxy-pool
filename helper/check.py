@@ -39,6 +39,32 @@ MAX_FAIL_COUNT = 5
 # ip:port 合法格式正则（如 1.2.3.4:8080）
 PROXY_FORMAT = re.compile(
     r'^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$')
+
+
+def _valid_ipv4(addr: str) -> bool:
+    """严格校验 IPv4 四段：值域 0-255 且**无前导零**（httpx 拒绝 000 写法）。
+
+    免费源常给 `141.000.11.253` 这类带前导零的脏 IP，PROXY_FORMAT 只校验
+    位数放行，但 httpx 构造代理 URL 时会抛 InvalidURL 崩溃整个验证批次。
+    在发网络请求前拦截，避免拖垮补源循环。
+    """
+    try:
+        host, _, port = addr.rpartition(":")
+        if not port.isdigit() or not (0 <= int(port) <= 65535):
+            return False
+        parts = host.split(".")
+        if len(parts) != 4:
+            return False
+        for part in parts:
+            if not part.isdigit():
+                return False
+            if len(part) > 1 and part[0] == "0":
+                return False  # 前导零：000 / 08
+            if not (0 <= int(part) <= 255):
+                return False
+        return True
+    except (TypeError, ValueError):
+        return False
 # 纯 IPv4 正则：验证 ipify 返回体必须是纯 IP，拦截劫持代理
 PROXY_IP_ONLY = re.compile(
     r'^\d{1,3}(?:\.\d{1,3}){3}$')
@@ -289,7 +315,7 @@ class Checker:
 
     def _format_check(self, proxy):
         """格式校验：ip:port 是否合法。不合法根本没理由发网络请求。"""
-        return bool(PROXY_FORMAT.match(proxy.proxy))
+        return bool(PROXY_FORMAT.match(proxy.proxy)) and _valid_ipv4(proxy.proxy)
 
     def _http_check(self, proxy):
         """通过代理访问 http 目标，能拿到 200 就返回 True。"""

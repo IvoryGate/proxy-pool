@@ -17,7 +17,7 @@ class KuaidailiFetcher(BaseFetcher):
     name = "kuaidaili"
     url = "https://www.kuaidaili.com"
 
-    def fetch(self, page_count=1):
+    def fetch(self, page_count=3):
         url_patterns = [
             "https://www.kuaidaili.com/free/inha/{}/",
             "https://www.kuaidaili.com/free/intr/{}/",

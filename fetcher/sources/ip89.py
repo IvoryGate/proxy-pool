@@ -17,11 +17,17 @@ IP_PORT = re.compile(
 class Ip89Fetcher(BaseFetcher):
     name = "ip89"
     url = "https://www.89ip.cn/"
+    # 分页抓取页数：站每页 ~40 个代理，抓前几页攒新 IP。
+    # 页间有部分重叠（最新几条会重复），跨页去重后仍是净增量。
+    page_count = 3
 
     def fetch(self):
-        r = self._http_get("https://www.89ip.cn/index_1.html", timeout=10)
-        if not r:
-            return
-        proxies = [":".join(m) for m in IP_PORT.findall(r.text)]
+        proxies = []
+        for page in range(1, self.page_count + 1):
+            r = self._http_get(
+                f"https://www.89ip.cn/index_{page}.html", timeout=10)
+            if not r:
+                continue
+            proxies += [":".join(m) for m in IP_PORT.findall(r.text)]
         for proxy in yield_unique_proxies(proxies):
             yield proxy
