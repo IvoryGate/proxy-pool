@@ -63,6 +63,12 @@ MAX_PER_SOURCE = 800
 # 2000 → 一轮 ~200s；2 轮 ~400s，8 分钟水位周期内能完成（3000 时 2 轮 580s
 # 超过周期导致 APScheduler skip，补源反而每 2 周期才跑一次）。
 MAX_VERIFY_PER_REFRESH = 2000
+# https 通过率优先的源：这些源的候选优先验证（放截断名单前）。
+# 实测 https 通过率（抽样 60）：monosans 10%、dpangestuw 8.3%、aliilapro 6.7%、
+# besjs/iplocate 3%。免费池里真 https 稀缺，优先验证高通过率源能让 https
+# 以最快速度入库（网关 zen 只认 https 代理）。其它源候选在限额内仍会验证。
+HTTPS_PRIORITY_SOURCES = ("monosans", "dpangestuw", "aliilapro",
+                          "besjs", "iplocate")
 
 
 def service_candidates():

@@ -54,7 +54,12 @@ class ProxyService:
         # 验证量上限：候选可能 2万+（游标广度放开），全验证会拖垮补源循环
         # （验证是瓶颈）。截断到上限，超出的下轮游标继续前进自然补到。
         from config.services import MAX_VERIFY_PER_REFRESH
+        from config.services import HTTPS_PRIORITY_SOURCES
         if MAX_VERIFY_PER_REFRESH is not None:
+            # 高 https 通过率源优先验证：把它们的候选排到截断名单前，
+            # 保证 https 入库速度（源顺序被打乱，不排序会随机挤掉它们）。
+            new_proxies.sort(
+                key=lambda p: 0 if p.source in HTTPS_PRIORITY_SOURCES else 1)
             new_proxies = new_proxies[:MAX_VERIFY_PER_REFRESH]
         ok_count, pairs = self.checker.check_all(new_proxies)
 

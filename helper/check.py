@@ -20,11 +20,12 @@ import httpx
 from helper import probe
 
 # 默认验证目标（可被构造函数覆盖）
-# 存活验证用 ipify（纯 IP 回显）：内容校验有效（拦截劫持代理/Cloudflare假代理），
-# 且国内外网络都可达。再用 baidu 做"真实转发"第二道确认（见 REALITY_URL），
-# 防止"能回显 IP 但不转发流量"的伪代理。
-HTTP_URL = "http://api.ipify.org"
-HTTPS_URL = "https://api.ipify.org"
+# 存活验证用纯 IP 回显：内容校验有效（拦截劫持代理/Cloudflare假代理），
+# 且国内外网络都可达。原用 api.ipify.org，2026-08 起该域名在国内
+# Connection refused（验证全灭 → 池子大缩水），改用 ip.3322.net
+# （国内 3322 服务，http/https 均返回纯 IP，本机实测可达）。
+HTTP_URL = "http://ip.3322.net"
+HTTPS_URL = "https://ip.3322.net"
 # 真实转发确认目标：能访问真实网站才算可用（拦"能回显但不转发"的伪代理）
 REALITY_URL = "http://www.baidu.com"
 REALITY_HTML_MARK = b"baidu"
