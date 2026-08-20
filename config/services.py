@@ -60,7 +60,9 @@ MAX_PER_SOURCE = 800
 # 一轮 refresh 最多验证多少个新候选。抓取广度放开后候选可达 2万+（游标轮转），
 # 全验证会卡死补源循环（验证才是瓶颈，万级候选要 10min+）。截断到上限：
 # 超出的下轮游标继续前进自然补到，不会漏。配合游标实现"广撒网、分批验证"。
-MAX_VERIFY_PER_REFRESH = 3000
+# 2000 → 一轮 ~200s；2 轮 ~400s，8 分钟水位周期内能完成（3000 时 2 轮 580s
+# 超过周期导致 APScheduler skip，补源反而每 2 周期才跑一次）。
+MAX_VERIFY_PER_REFRESH = 2000
 
 
 def service_candidates():
