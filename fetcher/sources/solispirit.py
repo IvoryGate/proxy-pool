@@ -14,8 +14,9 @@ from model.proxy import Proxy
 class SoliSpiritHttpFetcher(BaseFetcher):
     name = "solispirit-http"
     url = "https://github.com/SoliSpirit/proxy-list"
-    # 134k 候选，~8% 通过率；全量验证不现实，取前 15000 冲量
-    max_items = 15000
+    # 134k 候选，~8% 通过率；全量验证不现实。游标轮转下每轮抓 3000 条
+    # 持续推进覆盖广度，配合 MAX_VERIFY_PER_REFRESH 控制验证量。
+    max_items = 3000
 
     def fetch(self):
         raw_url = ("https://raw.githubusercontent.com/SoliSpirit/"

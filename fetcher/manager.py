@@ -16,8 +16,36 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import redis
+
 from model.proxy import Proxy
 from fetcher.base import BaseFetcher
+
+
+def _cursor_redis():
+    """游标专用 Redis 连接（db0，与主池同库；用 env 覆盖 Docker 主机名）。"""
+    return redis.Redis(
+        host=os.environ.get("REDIS_HOST", "127.0.0.1"),
+        port=int(os.environ.get("REDIS_PORT", 6379)),
+        db=int(os.environ.get("REDIS_CURSOR_DB", "0")),
+        decode_responses=True,
+    )
+
+
+def _get_cursor(name):
+    """读某源抓取游标（上次抓到列表第几个；无则 0）。"""
+    try:
+        return int(_cursor_redis().get(f"fetch_cursor:{name}") or 0)
+    except (redis.RedisError, ValueError):
+        return 0
+
+
+def _set_cursor(name, pos):
+    """写某源抓取游标。"""
+    try:
+        _cursor_redis().set(f"fetch_cursor:{name}", int(pos))
+    except (redis.RedisError, ValueError):
+        pass
 from fetcher.util import reservoir_sample
 
 
@@ -94,6 +122,22 @@ class Fetcher:
         """
         self.pool = pool
 
+    def _resolve_limit(self, fetcher, max_per_source):
+        """决定本源本轮抓取上限。
+
+        源可声明自己的 max_items（高质量源放开、死源降权）；
+        声明了就用源值（None=不限量）；未声明时用全局 max_per_source。
+        沿 MRO 找第一个声明 max_items 的类；只有第一个是源自己
+        才算"声明过"（继承自 BaseFetcher 的默认 None 不算）。
+        """
+        limit = getattr(fetcher, "max_items", None)
+        first_owner = next(
+            (cls for cls in type(fetcher).__mro__
+             if "max_items" in vars(cls)), None)
+        if first_owner is None or first_owner is BaseFetcher:
+            limit = max_per_source
+        return limit
+
     def run(self, fetcher_classes=None, max_per_source=None,
             source_timeout=45, max_workers=8):
         """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。
@@ -126,44 +170,51 @@ class Fetcher:
                 if src_proxy:
                     fetcher.proxy = src_proxy.proxy
             try:
-                source_items = fetcher.fetch()
-                # 源可声明自己的 max_items（高质量源放开、死源降权）；
-                # 声明了就用源值（None=不限量）；未声明时用全局 max_per_source。
-                # 沿 MRO 找第一个声明 max_items 的类；只有第一个是源自己
-                # 才算"声明过"（继承自 BaseFetcher 的默认 None 不算）。
-                limit = getattr(fetcher, "max_items", None)
-                first_owner = next(
-                    (cls for cls in type(fetcher).__mro__
-                     if "max_items" in vars(cls)), None)
-                if first_owner is None or first_owner is BaseFetcher:
-                    limit = max_per_source
-                if limit is not None:
-                    # 直接取前 N：代理列表源顺序无关，无须遍历全流做
-                    # 等概率抽样（reservoir_sample 遍历大源很慢）。
-                    source_items = itertools.islice(
-                        source_items, limit)
-                local = {}
-                for item in source_items:
-                    if item is None:
-                        break
-                    item_proxy = item.proxy if isinstance(item, Proxy) else item
-                    if item_proxy in local:
-                        existing = local[item_proxy]
-                        if not existing.source:
-                            existing.source = name
-                    else:
-                        p = item if isinstance(item, Proxy) else Proxy(proxy=item)
-                        if not p.source:
-                            p.source = name
-                        local[item_proxy] = p
-                with dict_lock:
-                    for addr, p in local.items():
-                        if addr in proxy_dict:
-                            existing = proxy_dict[addr]
+                limit = self._resolve_limit(fetcher, max_per_source)
+                cursor = _get_cursor(name)
+                total = 0          # 本轮累计抓到数量（去重前）
+                rounds = 0         # 源尾回绕最大重抓次数
+                # 每轮从"游标处"取一个窗口：持续前进，避免永远抓列表前几批。
+                # 游标存 Redis，跨进程持久；到源尾（窗口不满）回绕 0 重抓。
+                # 源列表顺序相对稳定（GitHub 文本），回绕后 refresh 层的
+                # 去重会跳过已入库 IP，只验证真正的新货。
+                while total < limit and rounds < 3:
+                    source_items = fetcher.fetch()
+                    need = limit - total
+                    window = list(itertools.islice(
+                        source_items, cursor, cursor + need))
+                    if not window:
+                        if cursor == 0:
+                            break          # 源真抓不到（挂了/空）
+                        cursor = 0         # 到源尾：回绕再抓一轮
+                        rounds += 1
+                        continue
+                    local = {}
+                    for item in window:
+                        item_proxy = item.proxy if isinstance(item, Proxy) else item
+                        if item_proxy in local:
+                            existing = local[item_proxy]
                             if not existing.source:
                                 existing.source = name
                         else:
-                            proxy_dict[addr] = p
+                            p = item if isinstance(item, Proxy) else Proxy(proxy=item)
+                            if not p.source:
+                                p.source = name
+                            local[item_proxy] = p
+                    with dict_lock:
+                        for addr, p in local.items():
+                            if addr in proxy_dict:
+                                existing = proxy_dict[addr]
+                                if not existing.source:
+                                    existing.source = name
+                            else:
+                                proxy_dict[addr] = p
+                    cursor += len(window)
+                    total += len(window)
+                    if len(window) < need:
+                        cursor = 0         # 到源尾：下次从头
+                        rounds += 1
+                _set_cursor(name, cursor)
             except Exception:
                 pass
             finally:

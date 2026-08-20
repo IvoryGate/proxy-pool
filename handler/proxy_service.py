@@ -51,6 +51,11 @@ class ProxyService:
                        if p.proxy not in existing
                        and PROXY_FORMAT.match(p.proxy)
                        and _valid_ipv4(p.proxy)]
+        # 验证量上限：候选可能 2万+（游标广度放开），全验证会拖垮补源循环
+        # （验证是瓶颈）。截断到上限，超出的下轮游标继续前进自然补到。
+        from config.services import MAX_VERIFY_PER_REFRESH
+        if MAX_VERIFY_PER_REFRESH is not None:
+            new_proxies = new_proxies[:MAX_VERIFY_PER_REFRESH]
         ok_count, pairs = self.checker.check_all(new_proxies)
 
         # 验证通过且 region 为空的 → 补打 region 标签
