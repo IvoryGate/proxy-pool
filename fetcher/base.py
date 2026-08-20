@@ -29,6 +29,11 @@ class BaseFetcher:
     # ---- 子类可覆盖 ----
     enabled = True   # 设为 False 可禁用该源
 
+    # 本源抓取上限：None = 不限量（用全局 max_per_source 或全取）。
+    # 高质量源（通过率高的）声明显式放开；死源调小，别让无效候选
+    # 占满验证时间和 API 配额。
+    max_items = None
+
     def __init__(self):
         self.proxy = None   # 抓源时用的代理地址 "host:port"，manager 可选赋值
 
