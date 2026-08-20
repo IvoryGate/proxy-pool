@@ -195,7 +195,8 @@ def test_waterline_refills_until_ok():
 
     service_min = {"cn": {"all": 12, "safe": 3}}
     levels, rounds, ok = svc.ensure_waterlines(
-        service_min=service_min, max_per_source=100, max_stall_rounds=2)
+        service_min=service_min, max_per_source=100, max_stall_rounds=2,
+        max_rounds=5)
     # 每轮新增5个，需12个 → 3轮填满（5*3=15>=12）
     assert ok is True, (levels, rounds)
     assert rounds == 3
@@ -213,7 +214,7 @@ def test_waterline_stops_when_stalled():
 
     service_min = {"cn": {"all": 10}}
     levels, rounds, ok = svc.ensure_waterlines(
-        service_min=service_min, max_stall_rounds=2)
+        service_min=service_min, max_stall_rounds=2, max_rounds=5)
     # 源每轮0新增 → 2轮后停，不达标
     assert ok is False
     assert rounds == 2

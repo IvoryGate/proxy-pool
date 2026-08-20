@@ -119,6 +119,9 @@ class ProxyService:
                 cur = self.pool.count_by_region(region)
             elif svc == "safe":
                 cur = self.pool.count_by_region(region, safe_only=True)
+            elif svc == "https":
+                # https 池：用 Redis 的 use_proxy:https 索引直接数（网关最关心）
+                cur = self.pool.count()["https"]
             elif svc in ("stable1", "stable2", "stable3"):
                 # 稳定性分级：按档位对应的最低信任分统计
                 from config.services import STABLE_LEVELS

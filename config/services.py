@@ -33,6 +33,11 @@ SERVICE_MIN = {
         "stable1": 400,
         "stable2": 200,
         "stable3": 100,
+        # https：网关（poverty-gateway）用 zen 探测是 HTTPS 端点，只能用能
+        # 建 HTTPS CONNECT 的代理。阶段 17 放宽入库门槛后 https 占比掉到
+        # ~1%（http-only 灌库），网关可用被饿死。单独保证 https 数量 200，
+        # 补源循环定向维护 https 池，避免被 http-only 稀释。
+        "https": 200,
     },
 }
 
