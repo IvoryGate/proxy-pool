@@ -14,6 +14,8 @@ from model.proxy import Proxy
 class JetkaiFetcher(BaseFetcher):
     name = "jetkai"
     url = "https://github.com/jetkai/proxy-list"
+    # 实测通过率 ~0%，降权省验证时间，保留复活机会
+    max_items = 50
 
     def fetch(self):
         raw_url = ("https://raw.githubusercontent.com/jetkai/proxy-list/"

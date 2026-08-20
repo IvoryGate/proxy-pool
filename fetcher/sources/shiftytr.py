@@ -15,6 +15,8 @@ from model.proxy import Proxy
 class ShiftyTRFetcher(BaseFetcher):
     name = "shiftytr"
     url = "https://github.com/ShiftyTR/Proxy-List"
+    # 实测通过率 ~0%（历史数据），降权省验证时间，保留复活机会
+    max_items = 50
 
     def fetch(self):
         raw_url = ("https://raw.githubusercontent.com/ShiftyTR/"

@@ -82,6 +82,9 @@ REGION_TARGETS = {
 # 批量验证：一批并发多少个。
 # 实测 500→1000 吞吐 +35%，但并发 1000 时部分代理被瞬时限流误杀（复核时
 # CN 代理被成片删掉）。取 500 平衡吞吐与误杀率。
+# 曾提到 1500 想冲吞吐，但验证大量并发连接触发 fd 上限
+# （OSError: Too many open files），复核整批误杀把池子从 1200 打到 550。
+# 定死 500：吞吐够用（单轮 8000 候选 ~150s），且不爆 fd。
 CHECK_BATCH_SIZE = 500
 
 
@@ -190,17 +193,18 @@ class Checker:
                 # 存活通过后：baidu(真实转发) 与 https 能力 **并行**检测。
                 # 之前串行 3 次请求，慢代理要 3×timeout 累积（10s+）；
                 # 并行后一个慢代理最快 ~timeout 就出结果，整批吞吐翻 3 倍。
+                # ipify 回显已证明"流量真经过代理"（目标看到的是代理出口 IP），
+                # 已足够拦截劫持/伪代理。baidu 真实转发只作参考（能到真实站
+                # 加分），不再作为入库/淘汰硬门槛 —— 实测它砍掉 95% 入库量
+                # （单轮 ipify 通过 1133 只入库 67），但我们的场景是网关转发
+                # 到 opencode，不是访问 baidu，最终质量交给网关 zen 探测把关。
                 reality_ok, https_ok = await asyncio.gather(
                     self._reality_ok(client),
                     self._async_fetch_ok(client, targets["https"]),
                 )
                 proxy.https = https_ok
-                if reality_ok:
-                    proxy.fail_count = 0
-                    proxy.last_status = True
-                else:
-                    proxy.fail_count += 1
-                    proxy.last_status = False
+                proxy.fail_count = 0
+                proxy.last_status = True
             else:
                 proxy.fail_count += 1
                 proxy.last_status = False

@@ -12,10 +12,10 @@ from handler.proxy_service import ProxyService
 # 检查水位 / 复核间隔（分钟）。
 # 免费代理寿命分钟级：复核太快删不干净、太慢留死代理；补源太慢跟不上死亡速度。
 # 实测：复核 1 分钟、补源 3 分钟，能让池子"边漏边补"保持水位。
-# 2026-08 补源提速（多页抓取）后单轮 refresh 耗时显著上升（候选翻倍、验证更久），
-# 3 分钟周期内 2 轮补源跑不完会导致 job skip（补源频率反而下降）。
-# 放宽到 5 分钟：给 2 轮补源留足时间，复核仍 1 分钟兜底。
-WATERLINE_INTERVAL = 5
+# 实时单轮 refresh 约 235s（接入 solispirit 等大源后涨到 190s→235s）。
+# MAX_WATERLINE_ROUNDS=1 + 周期 8 分钟：每周期恰好 1 轮（235s << 480s），
+# 绝不 skip；若提高单源配额导致单轮变长，8 分钟仍留足余量。
+WATERLINE_INTERVAL = 8
 CHECK_INTERVAL = 1
 
 
@@ -23,26 +23,37 @@ def make_waterline_job(service):
     """返回水位检查任务闭包，注入 service 以便测试替换。"""
     def waterline_job():
         from config.services import MAX_PER_SOURCE
-        print(">> 水位检查触发")
-        levels, rounds, ok = service.ensure_waterlines(
-            max_per_source=MAX_PER_SOURCE)
-        below = service.below_waterline(levels)
-        if below:
-            print(f"   补源 {rounds} 轮后仍未达标：")
-            for r, s, cur, mn in below:
-                print(f"     {r}/{s}: {cur}/{mn}")
-        else:
-            print(f"   所有服务达标（补源 {rounds} 轮）")
-        print(f"   池子 {service.count()}")
+        print(">> 水位检查触发", flush=True)
+        try:
+            levels, rounds, ok = service.ensure_waterlines(
+                max_per_source=MAX_PER_SOURCE)
+            below = service.below_waterline(levels)
+            if below:
+                print(f"   补源 {rounds} 轮后仍未达标：", flush=True)
+                for r, s, cur, mn in below:
+                    print(f"     {r}/{s}: {cur}/{mn}", flush=True)
+            else:
+                print(f"   所有服务达标（补源 {rounds} 轮）", flush=True)
+            print(f"   池子 {service.count()}", flush=True)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            print("   [waterline_job 异常，跳过本轮]", flush=True)
     return waterline_job
 
 
 def make_check_job(service):
     """返回复核任务闭包，注入 service 以便测试替换。"""
     def check_job():
-        print(">> 复核任务触发")
-        checked, eliminated = service.check_pool()
-        print(f"   复核 {checked} 个，淘汰 {eliminated}，池子 {service.count()}")
+        print(">> 复核任务触发", flush=True)
+        try:
+            checked, eliminated = service.check_pool()
+            print(f"   复核 {checked} 个，淘汰 {eliminated}，池子 {service.count()}",
+                  flush=True)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            print("   [check_job 异常，跳过本轮]", flush=True)
     return check_job
 
 

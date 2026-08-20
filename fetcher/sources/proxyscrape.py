@@ -17,6 +17,8 @@ from model.proxy import Proxy
 class ProxyScrapeFetcher(BaseFetcher):
     name = "proxyscrape"
     url = "https://proxyscrape.com/free-proxy-list"
+    # 实测通过率 ~16%，放开配额
+    max_items = 500
 
     def fetch(self):
         seen = set()

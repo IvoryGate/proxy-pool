@@ -17,6 +17,8 @@ from model.proxy import Proxy
 class DatabayFetcher(BaseFetcher):
     name = "databay"
     url = "https://databay.com/free-proxy-list"
+    # 实测通过率 ~18%，放开配额
+    max_items = 500
 
     def __init__(self, elite_only=False):
         super().__init__()

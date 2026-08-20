@@ -47,9 +47,9 @@ STABLE_LEVELS = {
 MAX_STALL_ROUNDS = 2
 # 补源循环：单次最多补多少轮（含"每轮都新增"的情况），防止 job 单实例霸占调度器
 # （配合 MAX_STALL_ROUNDS 双保险：无新增 2 轮停、或累计 MAX_WATERLINE_ROUNDS 轮必停）
-# 注意：一轮 refresh 抓取+验证要 40-80s，轮数多了单次 job 跑不完 3 分钟周期，
-# 下个周期会 skip（补源严重滞后）。2 轮内快速返回，保证每周期都能补。
-MAX_WATERLINE_ROUNDS = 2
+# 单轮 refresh ~235s，周期 8 分钟 → 固定 1 轮，绝不 skip（之前 2 轮出现过 skip，
+# 导致补源被跳过、池子净流出）。若提高单源配额变慢，8 分钟仍留足余量。
+MAX_WATERLINE_ROUNDS = 1
 # 每轮源抓多少（直接取前 N；源已并行抓取，量别太大，验证才是瓶颈）。
 # 120->250：主要大源(thespeedx/jetkai/monosans/databay)候选质量不错，
 # 适度提高抓取量让它们贡献更多；验证仍是瓶颈，250 在可接受范围。

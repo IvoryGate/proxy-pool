@@ -95,14 +95,14 @@ class Fetcher:
         self.pool = pool
 
     def run(self, fetcher_classes=None, max_per_source=None,
-            source_timeout=15, max_workers=8):
+            source_timeout=45, max_workers=8):
         """返回一个生成器，逐个 yield 出 Proxy 对象（已去重、带来源标记）。
 
         fetcher_classes：要跑的源类列表，默认自动扫描 sources/ 目录。
         max_per_source：每个源最多抓取多少个代理，None 表示不限量。
             防止超大源（如 hproxy 2.6 万）阻塞整个调度。
         source_timeout：单个源抓取的总时限（秒）。慢源超时即中断，
-            不拖垮整体。默认 15s。
+            不拖垮整体。默认 45s（容纳超大列表源的下载时间）。
         max_workers：并行抓源的线程数。默认 8 —— 慢源不再拖累整体，
             总耗时 ≈ 最慢单个源，而非所有源耗时之和。
         """
@@ -127,11 +127,21 @@ class Fetcher:
                     fetcher.proxy = src_proxy.proxy
             try:
                 source_items = fetcher.fetch()
-                if max_per_source is not None:
+                # 源可声明自己的 max_items（高质量源放开、死源降权）；
+                # 声明了就用源值（None=不限量）；未声明时用全局 max_per_source。
+                # 沿 MRO 找第一个声明 max_items 的类；只有第一个是源自己
+                # 才算"声明过"（继承自 BaseFetcher 的默认 None 不算）。
+                limit = getattr(fetcher, "max_items", None)
+                first_owner = next(
+                    (cls for cls in type(fetcher).__mro__
+                     if "max_items" in vars(cls)), None)
+                if first_owner is None or first_owner is BaseFetcher:
+                    limit = max_per_source
+                if limit is not None:
                     # 直接取前 N：代理列表源顺序无关，无须遍历全流做
                     # 等概率抽样（reservoir_sample 遍历大源很慢）。
                     source_items = itertools.islice(
-                        source_items, max_per_source)
+                        source_items, limit)
                 local = {}
                 for item in source_items:
                     if item is None:

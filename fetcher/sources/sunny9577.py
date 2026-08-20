@@ -15,6 +15,8 @@ from model.proxy import Proxy
 class Sunny9577Fetcher(BaseFetcher):
     name = "sunny9577"
     url = "https://github.com/sunny9577/proxy-scraper"
+    # 实测通过率 ~4%，适度放开
+    max_items = 400
 
     def fetch(self):
         url = "https://sunny9577.github.io/proxy-scraper/proxies.txt"

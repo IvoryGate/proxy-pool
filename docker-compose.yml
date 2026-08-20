@@ -36,6 +36,12 @@ services:
       - REDIS_PORT=6379
       # 脚本直接运行会以脚本目录为 sys.path[0]，需手动加入项目根，否则 import handler 失败
       - PYTHONPATH=/app
+    ulimits:
+      # 验证并发 500 × 每代理多连接，默认 1024 不够会 OSError: Too many
+      # open files → 复核整批误杀，把池子从 1200 打到 550。提到 65535。
+      nofile:
+        soft: 65535
+        hard: 65535
     depends_on:
       redis:
         condition: service_healthy

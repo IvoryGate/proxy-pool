@@ -17,6 +17,8 @@ from model.proxy import Proxy
 class OpenProxyListFetcher(BaseFetcher):
     name = "openproxylist"
     url = "https://openproxylist.com/proxy/"
+    # 实测通过率 ~0%，降权省验证时间，保留复活机会
+    max_items = 50
 
     def fetch(self):
         raw_url = ("https://cdn.jsdelivr.net/gh/roosterkid/"

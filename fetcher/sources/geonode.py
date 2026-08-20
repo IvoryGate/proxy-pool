@@ -13,6 +13,8 @@ from fetcher.util import yield_unique_proxies
 class GeonodeFetcher(BaseFetcher):
     name = "geonode"
     url = "https://geonode.com/"
+    # 实测通过率 ~4%，适度放开
+    max_items = 300
 
     def fetch(self):
         api_url = ("https://proxylist.geonode.com/api/proxy-list?"

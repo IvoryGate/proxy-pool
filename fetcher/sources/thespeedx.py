@@ -14,6 +14,8 @@ from model.proxy import Proxy
 class TheSpeedXHttpFetcher(BaseFetcher):
     name = "thespeedx-http"
     url = "https://github.com/TheSpeedX/PROXY-List"
+    # 超大源（2000+ 候选），实测通过率 ~10%，放开配额多取合格 IP
+    max_items = 500
 
     def fetch(self):
         raw_url = ("https://raw.githubusercontent.com/TheSpeedX/"

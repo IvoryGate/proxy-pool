@@ -15,6 +15,8 @@ from fetcher.util import parse_proxies_from_text, yield_unique_proxies
 class HProxyFetcher(BaseFetcher):
     name = "hproxy"
     url = "https://cdn.jsdelivr.net/gh/hproxy-com/free-proxy-list@main/all.txt"
+    # 实测通过率 ~6%，放开配额
+    max_items = 400
 
     def __init__(self, country="CN"):
         # country="CN" 只取中国（by-country/CN.txt）：这个源的全量列表 2 万+
