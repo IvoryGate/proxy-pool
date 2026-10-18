@@ -61,14 +61,19 @@ class FakePool:
                 break
         return out
 
-    def count_by_region(self, region, safe_only=False, stable_only=False):
+    def count_by_region(self, region, safe_only=False, stable_only=False,
+                        min_score=None, https_only=False):
         n = 0
         for p in self.store.values():
             if region == "cn" and p.region != "CN":
                 continue
             if region == "global" and p.region == "CN":
                 continue
+            if https_only and not p.https:
+                continue
             if safe_only and not (p.anonymous == "elite" and not p.tampered):
+                continue
+            if min_score is not None and p.score < min_score:
                 continue
             if stable_only and p.score < 2:
                 continue
@@ -195,7 +200,8 @@ def test_waterline_refills_until_ok():
 
     service_min = {"cn": {"all": 12, "safe": 3}}
     levels, rounds, ok = svc.ensure_waterlines(
-        service_min=service_min, max_per_source=100, max_stall_rounds=2)
+        service_min=service_min, max_per_source=100, max_stall_rounds=2,
+        max_rounds=5)
     # 每轮新增5个，需12个 → 3轮填满（5*3=15>=12）
     assert ok is True, (levels, rounds)
     assert rounds == 3
@@ -227,3 +233,27 @@ if __name__ == "__main__":
     test_waterline_refills_until_ok()
     test_waterline_stops_when_stalled()
     print("ALL PASSED")
+
+def test_check_pool_rolling_limit_prefers_oldest():
+    """滚动复核：只取最久没检查的若干个，避免每分钟全量打爆代理。"""
+    from handler.proxy_service import ProxyService
+
+    class Recorder:
+        def __init__(self):
+            self.seen = []
+
+        def check_all(self, proxies):
+            self.seen.extend(p.proxy for p in proxies)
+            return len(self.seen), []
+
+        def should_eliminate(self, fail_count):
+            return False
+
+    pool = FakePool()
+    for i, ts in enumerate((300, 100, 200), start=1):
+        pool.put(Proxy(proxy=f"10.0.0.{i}:80", last_time=ts))
+    rec = Recorder()
+    svc = ProxyService(checker=rec, pool=pool)
+    checked, _ = svc.check_pool(limit=2)
+    assert checked == 2
+    assert rec.seen == ["10.0.0.2:80", "10.0.0.3:80"]

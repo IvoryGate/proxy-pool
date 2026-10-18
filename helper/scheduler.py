@@ -11,12 +11,12 @@ from handler.proxy_service import ProxyService
 
 # 检查水位 / 复核间隔（分钟）。
 # 免费代理寿命分钟级：复核太快删不干净、太慢留死代理；补源太慢跟不上死亡速度。
-# 实测：复核 1 分钟、补源 3 分钟，能让池子"边漏边补"保持水位。
-# 2026-08 补源提速（多页抓取+游标轮转）后单轮 refresh 实测 ~143s（验证量 2000）。
-# 2 轮补源 ~286s。周期设 5 分钟：2 轮刚好在周期内完成（286s < 300s 不 skip），
-# 且比 8 分钟更紧凑——补源机会翻倍，池子爬升更快。复核仍 1 分钟兜底。
+# 复核从 1 分钟全量改为 3 分钟滚动复核（默认每次 100 个）：
+# 全量复核每个代理要 2 次网络请求，160 个池子每分钟就是 300+ 请求，
+# 既占满出口带宽，也容易把免费代理/目标站打出限流，反而制造假死。
 WATERLINE_INTERVAL = 5
-CHECK_INTERVAL = 1
+CHECK_INTERVAL = 3
+CHECK_BATCH_LIMIT = 100
 
 
 def make_waterline_job(service):
@@ -47,7 +47,7 @@ def make_check_job(service):
     def check_job():
         print(">> 复核任务触发", flush=True)
         try:
-            checked, eliminated = service.check_pool()
+            checked, eliminated = service.check_pool(limit=CHECK_BATCH_LIMIT)
             print(f"   复核 {checked} 个，淘汰 {eliminated}，池子 {service.count()}",
                   flush=True)
         except Exception:

@@ -74,21 +74,31 @@ class ProxyService:
                     p.region = cc
 
         added = 0
+        https_added = 0
         for proxy, _ in pairs:
             if proxy.last_status and not self.pool.exists(proxy):
                 self.pool.put(proxy)
                 added += 1
+                if proxy.https:
+                    https_added += 1
+        print(f"   refresh: 候选 {len(proxies)}，新验证 {len(new_proxies)}，"
+              f"通过 {ok_count}，新增 {added}（https {https_added}）", flush=True)
         return added, ok_count
 
-    def check_pool(self):
-        """复核池内全部代理，淘汰失效的。
+    def check_pool(self, limit=None):
+        """复核池内代理，淘汰失效的。
 
-        流程：取出池里所有代理 → 并发验证 → 逐个更新：
-          验证通过 → fail_count 归零，写回池子
-          验证失败 → fail_count +1，超过 MAX_FAIL_COUNT 则删除，否则写回
-        返回 (复核数量, 淘汰数量)。
+        limit: 每次最多复核多少个（滚动复核）。免费代理池很大时，每分钟
+        全量复核会发出上千次请求，既拖慢调度也容易把代理/目标打出限流。
+        按"上次失败优先、上次复核时间最旧优先"取前 limit 个，几轮内覆盖全池。
         """
         proxies = self.pool.getAll()
+        if limit and len(proxies) > limit:
+            proxies.sort(key=lambda p: (
+                0 if not p.last_status else 1,
+                p.last_time or 0,
+            ))
+            proxies = proxies[:limit]
         self.checker.check_all(proxies)   # 逐个更新 last_status / fail_count
 
         eliminated = 0
@@ -127,6 +137,8 @@ class ProxyService:
         for region, svc in candidates:
             if svc == "all":
                 cur = self.pool.count_by_region(region)
+            elif svc == "https":
+                cur = self.pool.count_by_region(region, https_only=True)
             elif svc == "safe":
                 cur = self.pool.count_by_region(region, safe_only=True)
             elif svc in ("stable1", "stable2", "stable3"):

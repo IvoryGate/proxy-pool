@@ -144,3 +144,27 @@ if __name__ == "__main__":
         fn()
         print(f"{fn.__name__} OK")
     print("ALL PASSED")
+
+def test_https_target_accepts_business_statuses():
+    """HTTPS 目标只要求链路通：200/401/403/429 都算，5xx/异常不算。"""
+    import httpx
+    from helper.check import Checker
+
+    class FakeClient:
+        def __init__(self, status):
+            self.status = status
+
+        async def get(self, url):
+            if self.status == "boom":
+                raise httpx.ConnectError("no route")
+            return httpx.Response(self.status)
+
+    c = Checker(probe_safety=False)
+    for code in (200, 401, 403, 429):
+        ok, latency = asyncio.run(c._async_https_ok(FakeClient(code), "https://x"))
+        assert ok is True
+        assert latency is not None
+    ok, _ = asyncio.run(c._async_https_ok(FakeClient(500), "https://x"))
+    assert ok is False
+    ok, _ = asyncio.run(c._async_https_ok(FakeClient("boom"), "https://x"))
+    assert ok is False

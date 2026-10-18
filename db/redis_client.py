@@ -154,13 +154,14 @@ class RedisPool:
         }
 
     def count_by_region(self, region, safe_only=False, stable_only=False,
-                        min_score=None):
+                        min_score=None, https_only=False):
         """统计某区域下符合条件的代理数。
 
         region      : 'cn' / 'global'
         safe_only   : True 只要匿名且未篡改的
         stable_only : True 只要信任分高的（score>=2，兼容旧调用）
         min_score   : 指定最低信任分（stable 分级用，如 stable3 传 5）
+        https_only  : True 只要支持 https 的（网关维度）
         返回数量。基于主数据实时统计（不依赖索引），准确但略慢。
         """
         if region == "cn":
@@ -173,6 +174,8 @@ class RedisPool:
             if not raw:
                 continue
             proxy = Proxy.create_from_json(raw)
+            if https_only and not proxy.https:
+                continue
             if safe_only and not (proxy.anonymous == "elite"
                                   and not proxy.tampered):
                 continue

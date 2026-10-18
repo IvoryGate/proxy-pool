@@ -31,6 +31,7 @@ def test_anonymity_transparent():
 
 def test_tamper_detected():
     # 走代理内容与直连不同 → 篡改
+    probe._DIRECT_HASH = None
     probe._get = lambda url, proxy_addr=None: (
         FakeResp(content=b"A" * 100) if proxy_addr is None
         else FakeResp(content=b"B" * 100))
@@ -40,6 +41,7 @@ def test_tamper_detected():
 
 def test_tamper_clean():
     # 走代理与直连内容一致 → 未篡改
+    probe._DIRECT_HASH = None   # 清掉前一个用例的直连缓存
     probe._get = lambda url, proxy_addr=None: FakeResp(content=b"clean")
     ok, _ = probe.check_tamper("1.2.3.4:8080")
     assert ok is True
@@ -47,6 +49,7 @@ def test_tamper_clean():
 
 def test_tamper_direct_fail_passes():
     # 直连失败 → 保守通过，不冤枉代理
+    probe._DIRECT_HASH = None
     probe._get = lambda url, proxy_addr=None: None
     ok, _ = probe.check_tamper("1.2.3.4:8080")
     assert ok is True

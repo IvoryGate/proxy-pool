@@ -13,7 +13,9 @@ qq 测 https。以后想换目标（如国外站），改这里或传入即可�
 """
 
 import asyncio
+import os
 import re
+import time
 
 import httpx
 
@@ -25,7 +27,16 @@ from helper import probe
 # Connection refused（验证全灭 → 池子大缩水），改用 ip.3322.net
 # （国内 3322 服务，http/https 均返回纯 IP，本机实测可达）。
 HTTP_URL = "http://ip.3322.net"
-HTTPS_URL = "https://ip.3322.net"
+# HTTPS 能力验证目标：必须验证到**业务真正要访问的站点**。
+# 之前用 https://ip.3322.net，只能证明代理能 CONNECT 到 3322，很多代理
+# 能过这一关却连不上 opencode.ai（网关的实际上游），于是 https 池看着有
+# 40+，网关 zen 探测却成片超时/连不上。改成 opencode 的 models 端点：
+# 只要拿到任意 HTTP 响应（200/401/403/429）就说明 CONNECT + TLS + 目标
+# 可达；连不上/超时则不算 https。可用 HTTPS_CHECK_URL 覆盖。
+HTTPS_URL = os.getenv(
+    "HTTPS_CHECK_URL", "https://opencode.ai/zen/v1/models")
+# 目标返回这些状态码都算"链路通"（业务层 401/403/429 是网关自己的事）
+HTTPS_ACCEPT_STATUS = {200, 401, 403, 429}
 # 真实转发确认目标：能访问真实网站才算可用（拦"能回显但不转发"的伪代理）
 REALITY_URL = "http://www.baidu.com"
 REALITY_HTML_MARK = b"baidu"
@@ -37,6 +48,9 @@ TIMEOUT = 3
 # 3→5：免费代理波动大（网络抖动/目标站限流），连续 3 次失败很容易误删
 # 其实还活着的代理。5 次连续失败才淘汰，容错更稳。
 MAX_FAIL_COUNT = 5
+# 是否额外做"真实站点转发"验证。默认关：HTTP 回声已校验内容，额外的
+# baidu 请求会让每个代理多一次网络往返，是复核吞吐的主要浪费之一。
+REALITY_CHECK = os.getenv("REALITY_CHECK", "0") == "1"
 # ip:port 合法格式正则（如 1.2.3.4:8080）
 PROXY_FORMAT = re.compile(
     r'^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$')
@@ -88,7 +102,7 @@ CHECK_BATCH_SIZE = 500
 
 class Checker:
     def __init__(self, region_targets=None, timeout=TIMEOUT,
-                 probe_safety=True):
+                 probe_safety=None, reality_check=None):
         self.region_targets = region_targets or REGION_TARGETS
         # timeout 拆 connect/read：只设 read 时，连不上的死代理会被内核
         # TCP 超时拖住（几十秒），整批并发验证被拖慢。connect 短超时让
@@ -96,8 +110,14 @@ class Checker:
         self.timeout = httpx.Timeout(
             timeout, connect=min(timeout, 2), read=timeout,
             pool=timeout, write=timeout)
-        # 安全/质量探针开关：默认开。测试关掉（探针要联网，测试不依赖网络）。
+        # 安全/质量探针默认关：匿名性+篡改每个代理多 2 次请求，是复核
+        # 吞吐的主要瓶颈；网关只用 https/延迟，不需要安全标签。需要时
+        # 用 PROBE_SAFETY=1 或构造参数打开。
+        if probe_safety is None:
+            probe_safety = os.getenv("PROBE_SAFETY", "0") == "1"
         self.probe_safety = probe_safety
+        self.reality_check = (
+            REALITY_CHECK if reality_check is None else reality_check)
 
     def _targets_for(self, proxy):
         """按代理区域选择验证目标。区域为 CN → 国内，否则 → 国际。"""
@@ -117,6 +137,7 @@ class Checker:
             proxy.fail_count += 1
             proxy.check_count += 1
             proxy.last_status = False
+            proxy.last_time = time.time()
             return False, proxy.fail_count
 
         http_ok = self._http_check(proxy)
@@ -130,6 +151,7 @@ class Checker:
             proxy.last_status = False
             proxy.https = False
         proxy.check_count += 1
+        proxy.last_time = time.time()
         self._update_score(proxy, http_ok)
 
         if http_ok and self.probe_safety:
@@ -174,11 +196,19 @@ class Checker:
         return ok_count, list(zip(proxies, results))
 
     async def _check_one_async(self, proxy):
-        """异步验证单个 proxy（格式 + http + https），更新其状态。"""
+        """异步验证单个 proxy（格式 + http + https）。
+
+        优化（阶段 21）：
+        - 去掉单独的 baidu reality 请求与额外 latency 请求：HTTP 回声已经
+          校验了返回体是合法 IP，HTTPS 目标请求顺手记录 TTFB。
+        - https 目标改为网关真正访问的 opencode.ai，而不是 ip.3322.net。
+        - 安全探针默认关闭（PROBE_SAFETY=1 才开）。
+        """
         if not self._format_check(proxy):
             proxy.fail_count += 1
             proxy.check_count += 1
             proxy.last_status = False
+            proxy.last_time = time.time()
             return False, proxy.fail_count
 
         proxy_url = f"http://{proxy.proxy}"
@@ -187,15 +217,15 @@ class Checker:
                                      verify=False) as client:
             targets = self._targets_for(proxy)
             http_ok = await self._async_fetch_ok(client, targets["http"])
+            reality_ok = True
             if http_ok:
-                # 存活通过后：baidu(真实转发) 与 https 能力 **并行**检测。
-                # 之前串行 3 次请求，慢代理要 3×timeout 累积（10s+）；
-                # 并行后一个慢代理最快 ~timeout 就出结果，整批吞吐翻 3 倍。
-                reality_ok, https_ok = await asyncio.gather(
-                    self._reality_ok(client),
-                    self._async_fetch_ok(client, targets["https"]),
-                )
+                # HTTPS 目标连通性 + 延迟一次完成（不再单独发 latency 请求）
+                https_ok, latency = await self._async_https_ok(
+                    client, targets["https"])
                 proxy.https = https_ok
+                proxy.latency_ms = latency
+                if self.reality_check:
+                    reality_ok = await self._reality_ok(client)
                 if reality_ok:
                     proxy.fail_count = 0
                     proxy.last_status = True
@@ -206,13 +236,14 @@ class Checker:
                 proxy.fail_count += 1
                 proxy.last_status = False
                 proxy.https = False
+                proxy.latency_ms = None
         proxy.check_count += 1
-        self._update_score(proxy, http_ok)
+        proxy.last_time = time.time()
+        self._update_score(proxy, http_ok and reality_ok)
 
         # 存活通过后，做安全/质量探测（只打标签，不参与淘汰）
         if http_ok and self.probe_safety:
             await self._probe_safety_async(proxy, client)
-            await self._measure_latency(proxy)
 
         return http_ok, proxy.fail_count
 
@@ -290,6 +321,20 @@ class Checker:
         except Exception:
             return False
 
+    async def _async_https_ok(self, client, url):
+        """HTTPS 目标连通性：拿到任意"业务响应"即视为 CONNECT+TLS 成功。
+
+        返回 (是否可达, TTFB 毫秒)。只有网络错误/超时/5xx 算不可达；
+        401/403/429 是上游业务层状态，说明链路已经通了。
+        """
+        start = asyncio.get_event_loop().time()
+        try:
+            r = await client.get(url)
+            latency = int((asyncio.get_event_loop().time() - start) * 1000)
+        except Exception:
+            return False, None
+        return r.status_code in HTTPS_ACCEPT_STATUS, latency
+
     async def _async_fetch_ok(self, client, url):
         """GET 目标并判断"验证通过"。
 
@@ -323,8 +368,14 @@ class Checker:
         return self._fetch_ok(self._targets_for(proxy)["http"], proxy.proxy)
 
     def _https_check(self, proxy):
-        """通过代理访问 https 目标，能拿到 200 就返回 True（支持 https）。"""
-        return self._fetch_ok(self._targets_for(proxy)["https"], proxy.proxy)
+        """通过代理访问 HTTPS 目标，拿到业务响应即视为支持 HTTPS。"""
+        proxy_url = f"http://{proxy.proxy}"
+        try:
+            r = httpx.get(self._targets_for(proxy)["https"],
+                          proxy=proxy_url, timeout=self.timeout, verify=False)
+            return r.status_code in HTTPS_ACCEPT_STATUS
+        except Exception:
+            return False
 
     def _fetch_ok(self, url, proxy_addr):
         proxy_url = f"http://{proxy_addr}"

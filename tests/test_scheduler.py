@@ -16,7 +16,7 @@ class FakeService:
     def below_waterline(self, levels):
         return []
 
-    def check_pool(self):
+    def check_pool(self, limit=None):
         self.check_calls += 1
         return (3, 1)  # (checked, eliminated)
 
